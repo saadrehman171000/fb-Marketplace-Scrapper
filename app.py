@@ -30,18 +30,13 @@ def scrape_facebook_marketplace_partial(city, product, min_price, max_price, cit
 def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact, sleep_time=3):
     chrome_options = uc.ChromeOptions()
     
-    # Enhanced anti-detection options
+    # Basic anti-detection options
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-dev-shm-usage')
     chrome_options.add_argument('--disable-blink-features=AutomationControlled')
     chrome_options.add_argument("--disable-notifications")
-    chrome_options.add_argument("--disable-popup-blocking")
-    chrome_options.add_argument('--no-first-run')
-    chrome_options.add_argument('--password-store=basic')
-    chrome_options.add_argument(f"--window-size=1920,1080")
+    chrome_options.add_argument('--window-size=1920,1080')
     chrome_options.add_argument("--start-maximized")
-    
-    # Add a realistic user agent
     chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.224 Safari/537.36')
     
     try:
@@ -49,41 +44,47 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
         
         browser = uc.Chrome(
             options=chrome_options,
-            version_main=120,  # Specify the exact version
+            version_main=120,
             headless=True,
             use_subprocess=True
         )
         st.info("Browser initialized successfully")
         
-        # First load Facebook's main page
-        browser.get('https://www.facebook.com')
-        time.sleep(5)
+        # Define selectors before the URL loop
+        selectors = [
+            "div[role='main'] a[role='link']",
+            "div[style*='border-radius: max(0px, min(8px, calc((100vw - 4px - 100%) * 9999))) / 8px']",
+            "div[class*='x3ct3a4']"
+        ]
         
-        # Try different URL formats if the first one doesn't work
+        # Try different URL formats
+        exact_param = 'true' if exact else 'false'
         urls = [
-            f"https://www.facebook.com/marketplace/{city_code_fb}/search?query={product}&exact={exact}&minPrice={min_price}&maxPrice={max_price}",
-            f"https://www.facebook.com/marketplace/category/search/?query={product}&exact={exact}&minPrice={min_price}&maxPrice={max_price}&region_id={city_code_fb}",
-            f"https://www.facebook.com/marketplace/search?query={product}&exact={exact}&minPrice={min_price}&maxPrice={max_price}&latitude=34.0522&longitude=-118.2437"
+            f"https://www.facebook.com/marketplace/search/?query={product}&exact={exact_param}&minPrice={min_price}&maxPrice={max_price}",
+            f"https://www.facebook.com/marketplace/category/search/?query={product}&exact={exact_param}&minPrice={min_price}&maxPrice={max_price}",
+            f"https://www.facebook.com/marketplace/{city_code_fb}/search/?query={product}&exact={exact_param}&minPrice={min_price}&maxPrice={max_price}"
         ]
 
+        items = []
         for url in urls:
             try:
                 st.info(f"Attempting to access URL: {url}")
                 browser.get(url)
-                time.sleep(random.uniform(10, 15))
+                time.sleep(10)  # Wait for page load
                 
-                # Check if we got results
-                items = []
+                # Check each selector
                 for selector in selectors:
                     items = browser.find_elements(By.CSS_SELECTOR, selector)
                     if len(items) > 0:
+                        st.info(f"Found {len(items)} items using selector: {selector}")
                         break
                 
                 if len(items) > 0:
                     break  # Found items, use this URL
-            except:
+            except Exception as e:
+                st.warning(f"Failed with URL {url}: {str(e)}")
                 continue
-        
+
         st.info("Page loaded, checking for elements...")
         
         # Updated selectors for better targeting
@@ -94,26 +95,6 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
         ]
         
         items = []
-        for selector in selectors:
-            items = browser.find_elements(By.CSS_SELECTOR, selector)
-            if len(items) > 0:
-                st.info(f"Found {len(items)} items using selector: {selector}")
-                break
-        
-        # Scroll with more time between iterations
-        count = 0
-        last_height = browser.execute_script("return document.body.scrollHeight")
-        while count < 5:
-            browser.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(5)
-            new_height = browser.execute_script("return document.body.scrollHeight")
-            count += 1
-            st.info(f"Scroll iteration {count}/5")
-            if new_height == last_height:
-                break
-            last_height = new_height
-            
-        # Try to find items again after scrolling
         for selector in selectors:
             items = browser.find_elements(By.CSS_SELECTOR, selector)
             if len(items) > 0:
