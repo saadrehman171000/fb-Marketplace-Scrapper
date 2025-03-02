@@ -60,7 +60,7 @@
 # wsproto==1.2.0
 streamlit
 selenium
-undetected-chromedriver
+undetected-chromedriver==3.5.3
 webdriver-manager
 beautifulsoup4
 fuzzywuzzy

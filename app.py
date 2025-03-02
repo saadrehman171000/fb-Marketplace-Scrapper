@@ -32,12 +32,19 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("--start-maximized")
     chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--disable-extensions")
     
     # For cloud deployment
     chrome_options.binary_location = "/usr/bin/chromium"
     
     try:
-        browser = uc.Chrome(options=chrome_options)
+        # Try with version override
+        version_main = 120  # Match the Chrome version installed
+        browser = uc.Chrome(
+            options=chrome_options,
+            version_main=version_main,
+            driver_executable_path="/usr/bin/chromedriver"
+        )
         st.info("Browser initialized successfully")
         
         exact_param = 'true' if exact else 'false'
