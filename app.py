@@ -35,25 +35,23 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
     chrome_options.add_argument('--disable-dev-shm-usage')
     chrome_options.add_argument('--disable-blink-features=AutomationControlled')
     chrome_options.add_argument("--disable-notifications")
-    chrome_options.add_argument("--ignore-certificate-errors")
     chrome_options.add_argument("--disable-popup-blocking")
     chrome_options.add_argument('--no-first-run')
-    chrome_options.add_argument('--no-service-autorun')
     chrome_options.add_argument('--password-store=basic')
     chrome_options.add_argument(f"--window-size=1920,1080")
     chrome_options.add_argument("--start-maximized")
     
     # Add a realistic user agent
-    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.224 Safari/537.36')
     
     try:
         os.makedirs('.chrome', exist_ok=True)
         
         browser = uc.Chrome(
             options=chrome_options,
-            driver_executable_path=None,
-            headless=True,  # Changed from argument to parameter
-            use_subprocess=True  # Add this for better stability
+            version_main=120,  # Specify the exact version
+            headless=True,
+            use_subprocess=True
         )
         st.info("Browser initialized successfully")
         
