@@ -6,6 +6,8 @@ import time
 import io
 import zipfile
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 def setup_driver():
     chrome_options = Options()
@@ -17,31 +19,69 @@ def setup_driver():
     return webdriver.Chrome(options=chrome_options)
 
 def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb):
+    driver = None
     try:
+        st.write("Starting scraper...")
         driver = setup_driver()
         marketplace_url = f"https://www.facebook.com/marketplace/{city_code_fb}/search?query={product}&minPrice={min_price}&maxPrice={max_price}"
+        st.write(f"Accessing URL: {marketplace_url}")
+        
         driver.get(marketplace_url)
-        time.sleep(5)  # Initial load wait
+        time.sleep(10)  # Increased wait time for initial load
         
-        # Initialize list to store items
+        # Debug: Print page title and URL
+        st.write(f"Current page title: {driver.title}")
+        st.write(f"Current URL: {driver.current_url}")
+        
+        # Wait for main content to load
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+        
+        # Try different selectors for product cards
+        selectors = [
+            "div[role='main'] a[role='link']",  # Main content links
+            "div[style*='width: 100%']",        # Product cards
+            "a[href*='/marketplace/item/']"     # Direct item links
+        ]
+        
         items = []
+        for selector in selectors:
+            st.write(f"Trying selector: {selector}")
+            product_cards = driver.find_elements(By.CSS_SELECTOR, selector)
+            if product_cards:
+                st.write(f"Found {len(product_cards)} items with selector {selector}")
+                break
         
-        # Scroll a few times to load more items
-        for _ in range(3):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
+        if not product_cards:
+            st.error("No products found. The page might have a different structure.")
+            return pd.DataFrame(), 0
         
-        # Find all product cards
-        product_cards = driver.find_elements(By.CSS_SELECTOR, "div[style*='width: 100%']")
-        
-        for card in product_cards:
+        for card in product_cards[:10]:  # Limit to first 10 items for testing
             try:
-                # Extract product details
-                title = card.find_element(By.CSS_SELECTOR, "span[style*='webkit-line-clamp: 2']").text
-                price = card.find_element(By.CSS_SELECTOR, "span[style*='color: rgb(5, 5, 5)']").text
-                link = card.find_element(By.CSS_SELECTOR, "a").get_attribute("href")
+                # Get the HTML of the card for debugging
+                card_html = card.get_attribute('outerHTML')
+                st.write(f"Processing card: {card_html[:200]}...")  # Show first 200 chars
                 
-                # Clean price (remove currency symbol and convert to number)
+                # Try different ways to get title and price
+                try:
+                    title = card.find_element(By.CSS_SELECTOR, "span").text
+                except:
+                    title = "Title not found"
+                
+                try:
+                    price = card.find_element(By.CSS_SELECTOR, "span[style*='color']").text
+                except:
+                    price = "Price not found"
+                
+                try:
+                    link = card.get_attribute("href")
+                except:
+                    link = "Link not found"
+                
+                st.write(f"Found item: {title} - {price}")
+                
+                # Clean price
                 price_clean = ''.join(filter(str.isdigit, price))
                 price_clean = int(price_clean) if price_clean else 0
                 
@@ -52,20 +92,28 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
                     'city': city,
                     'search_term': product
                 })
+                
             except Exception as e:
+                st.write(f"Error processing card: {str(e)}")
                 continue
         
-        driver.quit()
-        
-        # Convert to DataFrame
-        df = pd.DataFrame(items)
-        return df, len(items)
-        
+        if items:
+            df = pd.DataFrame(items)
+            st.write("Scraped data preview:")
+            st.write(df.head())
+            return df, len(items)
+        else:
+            st.error("No items could be scraped")
+            return pd.DataFrame(), 0
+            
     except Exception as e:
         st.error(f"Error during scraping: {str(e)}")
-        if 'driver' in locals():
-            driver.quit()
         return pd.DataFrame(), 0
+        
+    finally:
+        if driver:
+            st.write("Closing browser...")
+            driver.quit()
 
 # Streamlit UI
 st.set_page_config(page_title="Facebook Marketplace Scraper", layout="wide")
