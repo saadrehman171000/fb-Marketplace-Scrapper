@@ -38,12 +38,15 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
     chrome_options.binary_location = "/usr/bin/chromium"
     
     try:
+        # Create a local directory for chromedriver
+        os.makedirs('.chrome', exist_ok=True)
+        
         # Try with version override
         version_main = 120  # Match the Chrome version installed
         browser = uc.Chrome(
             options=chrome_options,
             version_main=version_main,
-            driver_executable_path="/usr/bin/chromedriver"
+            driver_executable_path=None  # Let undetected_chromedriver handle it
         )
         st.info("Browser initialized successfully")
         
