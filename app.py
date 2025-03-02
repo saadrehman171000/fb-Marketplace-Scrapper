@@ -1,19 +1,19 @@
 ﻿import streamlit as st
-import undetected_chromedriver as uc
+import pandas as pd
 from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 import re
-import pandas as pd
 import time
 from fuzzywuzzy import fuzz
 from datetime import datetime
-from selenium.webdriver.chrome.options import Options
 import zipfile
 import io
 import os
+import random
 
 # Function to run the web scraping for exact matches
 def scrape_facebook_marketplace_exact(city, product, min_price, max_price, city_code_fb):
@@ -64,10 +64,12 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
         
         st.info("Browser initialized successfully")
         
+        exact_param = 'true' if exact else 'false'
+        
         # Try different URL formats
         urls = [
-            f"https://www.facebook.com/marketplace/{city_code_fb}/search/?query={product}&exact={str(exact).lower()}&minPrice={min_price}&maxPrice={max_price}",
-            f"https://www.facebook.com/marketplace/search/?query={product}&exact={str(exact).lower()}&minPrice={min_price}&maxPrice={max_price}&region_id={city_code_fb}",
+            f"https://www.facebook.com/marketplace/{city_code_fb}/search/?query={product}&exact={exact_param}&minPrice={min_price}&maxPrice={max_price}",
+            f"https://www.facebook.com/marketplace/search/?query={product}&exact={exact_param}&minPrice={min_price}&maxPrice={max_price}&region_id={city_code_fb}",
             f"https://m.facebook.com/marketplace/{city_code_fb}/search/?query={product}"
         ]
         
@@ -98,12 +100,13 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
                 st.info(f"Found {len(items)} items using selector: {selector}")
                 break
         
-        # Scroll with more time between iterations
+        # Scroll with random delays
         count = 0
         last_height = browser.execute_script("return document.body.scrollHeight")
         while count < 5:
-            browser.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(5)
+            scroll_amount = random.randint(300, 800)
+            browser.execute_script(f"window.scrollBy(0, {scroll_amount});")
+            time.sleep(random.uniform(2.0, 4.0))
             new_height = browser.execute_script("return document.body.scrollHeight")
             count += 1
             st.info(f"Scroll iteration {count}/5")
@@ -118,76 +121,46 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
                 st.info(f"Found {len(items)} total items after scrolling using selector: {selector}")
                 break
         
-        # Update the title selectors
-        title_selectors = [
-            "span[class*='x1lliihq']:not([class*='x193iq5w'])",  # Title text, excluding price
-            "div[class*='x1gslohp'] span",  # Alternative title container
-            "span[class*='xt0psk2']"  # Another common title class
-        ]
-
-        # Update the price selectors
-        price_selectors = [
-            "span[class*='x193iq5w']",  # Main price class
-            "span[class*='x1s928wv']",  # Alternative price class
-            "span[class*='x1lliihq'][class*='x193iq5w']"  # Combined price classes
-        ]
-
         # Extract data from items
         extracted_data = []
         for item in items:
             try:
-                # Get title
-                title = None
-                for selector in title_selectors:
-                    try:
-                        title_elem = item.find_element(By.CSS_SELECTOR, selector)
-                        title = title_elem.text.strip()
-                        if title and not title.startswith('$') and not title.lower() == 'free':
-                            break
-                    except:
-                        continue
-
-                # Get price
-                price = None
-                price_text = None
-                for selector in price_selectors:
-                    try:
-                        price_elem = item.find_element(By.CSS_SELECTOR, selector)
-                        price_text = price_elem.text.strip()
-                        if price_text:
-                            if price_text.lower() == 'free':
-                                price = 0
-                            else:
-                                price = float(price_text.replace('$', '').replace(',', ''))
-                            break
-                    except:
-                        continue
-
-                # Get URL
-                url = item.get_attribute('href')
-                if not url:
-                    try:
-                        url = item.find_element(By.CSS_SELECTOR, "a").get_attribute('href')
-                    except:
-                        continue
-
-                if title and url:  # Only add items with at least title and URL
-                    extracted_data.append({
-                        'title': title,
-                        'price': price,
-                        'price_text': price_text,  # Keep original price text
-                        'location': city,
-                        'url': url
-                    })
-                    st.info(f"Found item: {title} - {price_text}")  # Debug info
-
+                # Get all text content
+                text_content = item.text
+                st.write(f"Processing element with text: {text_content[:100]}")
+                
+                # Look for price and title
+                if '$' in text_content:
+                    lines = text_content.split('\n')
+                    price_line = next((line for line in lines if '$' in line), None)
+                    
+                    if price_line:
+                        price = ''.join(filter(str.isdigit, price_line))
+                        price = int(price) if price else 0
+                        
+                        # Title is usually the longest line without $ or special characters
+                        title_candidates = [line for line in lines if '$' not in line and len(line) > 5]
+                        title = max(title_candidates, key=len) if title_candidates else "Unknown Title"
+                        
+                        link = item.get_attribute('href') or '#'
+                        
+                        if price > 0 and title:
+                            extracted_data.append({
+                                'title': title.strip(),
+                                'price': price,
+                                'price_text': price_line,
+                                'location': city,
+                                'url': link
+                            })
+                            st.info(f"Added item: {title.strip()} - ${price}")
+            
             except Exception as e:
                 st.warning(f"Failed to extract item data: {str(e)}")
                 continue
         
         st.info(f"Successfully extracted {len(extracted_data)} items")
         
-        # Create DataFrame with better column ordering
+        # Create DataFrame
         items_df = pd.DataFrame(extracted_data)
         if not items_df.empty:
             items_df = items_df[['title', 'price', 'price_text', 'location', 'url']]
