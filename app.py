@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 import subprocess
+import random
 
 def get_chromium_version():
     try:
@@ -27,114 +28,139 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
     try:
         st.write("Starting marketplace search...")
         
-        # Enhanced Chrome options
+        # Enhanced Chrome options to avoid detection
         chrome_options = Options()
-        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--headless=new')  # New headless mode
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')  # Hide automation
         chrome_options.add_argument('--disable-gpu')
         chrome_options.add_argument('--window-size=1920,1080')
-        chrome_options.add_argument('--disable-notifications')
-        chrome_options.add_argument('--disable-popup-blocking')
-        chrome_options.add_argument('--disable-javascript-harmony-shipping')
-        chrome_options.add_argument('--disable-site-isolation-trials')
-        chrome_options.add_argument('--disable-web-security')
-        chrome_options.add_argument('--disable-features=IsolateOrigins,site-per-process')
+        chrome_options.add_argument('--start-maximized')
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        
+        # Add required preferences
+        prefs = {
+            "profile.default_content_setting_values.notifications": 2,
+            "credentials_enable_service": False,
+            "profile.password_manager_enabled": False,
+            "profile.managed_default_content_settings.images": 1,
+            "disk-cache-size": 4096
+        }
+        chrome_options.add_experimental_option("prefs", prefs)
         
         service = Service('/usr/bin/chromedriver')
         driver = webdriver.Chrome(service=service, options=chrome_options)
         
-        # Use a direct marketplace search URL
-        url = f"https://www.facebook.com/marketplace/category/{city_code_fb}/search?query={product}&exact=false&minPrice={min_price}&maxPrice={max_price}"
+        # Modify the navigator properties to avoid detection
+        driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+            'source': '''
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5]
+                });
+            '''
+        })
+        
+        # Use the mobile version of the site
+        url = f"https://m.facebook.com/marketplace/{city_code_fb}/search/?query={product}&minPrice={min_price}&maxPrice={max_price}"
         st.write(f"Accessing URL: {url}")
         
         driver.get(url)
         st.write("Waiting for initial load...")
-        time.sleep(10)
+        time.sleep(15)  # Longer initial wait
         
-        # Execute JavaScript to check page readiness
-        is_ready = driver.execute_script("return document.readyState")
-        st.write(f"Page ready state: {is_ready}")
+        # Check if we're on a login page
+        if "login" in driver.current_url.lower():
+            st.write("Redirected to login page, trying alternative URL...")
+            # Try the public search URL
+            url = f"https://www.facebook.com/marketplace/search/?query={product}"
+            driver.get(url)
+            time.sleep(10)
         
-        # Get initial page content
-        initial_content = driver.page_source
-        st.write(f"Initial page length: {len(initial_content)}")
+        # Get page info
+        st.write(f"Current URL: {driver.current_url}")
+        st.write(f"Page title: {driver.title}")
         
-        # Scroll to load more content
-        for i in range(3):
-            driver.execute_script("""
-                window.scrollTo({
-                    top: document.body.scrollHeight,
-                    behavior: 'smooth'
-                });
-            """)
-            time.sleep(3)
+        # Scroll with random delays
+        for i in range(4):
+            scroll_amount = random.randint(300, 800)  # Random scroll amount
+            driver.execute_script(f"window.scrollBy(0, {scroll_amount});")
+            time.sleep(random.uniform(2.0, 4.0))  # Random delay
             st.write(f"Scroll {i+1} completed")
         
-        # Wait for marketplace items
-        try:
-            WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div[style*='width: 100%']"))
-            )
-        except Exception as e:
-            st.write("Timeout waiting for items to load")
-        
-        # Try multiple selectors
+        # Try multiple selectors with more specific targeting
         selectors = [
-            "div[style*='width: 100%']",
-            "div[role='main'] a",
-            "div[data-pagelet='MainFeed']",
-            "div[class*='x1n2onr6']",
-            "a[href*='/marketplace/item/']"
+            "//div[contains(@style, 'border-radius') and .//span[contains(text(), '$')]]",  # XPath for items with price
+            "//a[contains(@href, '/marketplace/item/')]",  # XPath for marketplace items
+            "//div[contains(@class, 'x1n2onr6')]//span[contains(text(), '$')]/..",  # XPath for price containers
+            "div[role='main'] a[href*='/marketplace/item/']",  # CSS for item links
+            "div[style*='width: 100%'][role='button']"  # CSS for item containers
         ]
         
         items = []
         for selector in selectors:
             st.write(f"\nTrying selector: {selector}")
-            elements = driver.find_elements(By.CSS_SELECTOR, selector)
-            st.write(f"Found {len(elements)} elements")
-            
-            if elements:
-                # Show sample of first element
-                sample_html = elements[0].get_attribute('outerHTML')
-                st.write("Sample element HTML:", sample_html[:200])
+            try:
+                if '//' in selector:  # XPath selector
+                    elements = driver.find_elements(By.XPATH, selector)
+                else:  # CSS selector
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
                 
-                for element in elements:
-                    try:
-                        # Get all text content
-                        text_content = element.text
-                        st.write(f"Element text content: {text_content}")
-                        
-                        # Try to find price (looking for $ symbol)
-                        if '$' in text_content:
-                            lines = text_content.split('\n')
-                            for i, line in enumerate(lines):
-                                if '$' in line:
-                                    price_text = line
-                                    title = lines[i-1] if i > 0 else lines[i+1]
-                                    
-                                    price = ''.join(filter(str.isdigit, price_text))
+                st.write(f"Found {len(elements)} elements")
+                
+                if elements:
+                    # Show sample of first element
+                    sample_html = elements[0].get_attribute('outerHTML')
+                    st.write("Sample element HTML:", sample_html[:200])
+                    
+                    for element in elements:
+                        try:
+                            # Get all text and HTML
+                            text_content = element.text
+                            html_content = element.get_attribute('outerHTML')
+                            st.write(f"Processing element with text: {text_content[:100]}")
+                            
+                            # Look for price and title
+                            if '$' in text_content:
+                                # Split content into lines
+                                lines = text_content.split('\n')
+                                price_line = next((line for line in lines if '$' in line), None)
+                                
+                                if price_line:
+                                    price = ''.join(filter(str.isdigit, price_line))
                                     price = int(price) if price else 0
+                                    
+                                    # Title is usually the longest line without $ or special characters
+                                    title_candidates = [line for line in lines if '$' not in line and len(line) > 5]
+                                    title = max(title_candidates, key=len) if title_candidates else "Unknown Title"
                                     
                                     link = element.get_attribute('href') or '#'
                                     
                                     if price > 0 and title:
                                         items.append({
-                                            'title': title,
+                                            'title': title.strip(),
                                             'price': price,
                                             'link': link,
                                             'city': city,
                                             'search_term': product
                                         })
-                                        st.write(f"Added item: {title} - ${price}")
-                                    break
-                    except Exception as e:
-                        st.write(f"Error processing element: {str(e)}")
-                        continue
-                
-                if items:
-                    break
+                                        st.write(f"Added item: {title.strip()} - ${price}")
+                        
+                        except Exception as e:
+                            st.write(f"Error processing element: {str(e)}")
+                            continue
+                    
+                    if items:
+                        break
+                        
+            except Exception as e:
+                st.write(f"Error with selector {selector}: {str(e)}")
+                continue
         
         driver.quit()
         st.write("Browser closed")
