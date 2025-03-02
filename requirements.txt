@@ -5,3 +5,5 @@ python-dotenv
 beautifulsoup4
 selenium
 webdriver-manager>=3.8.0
+fuzzywuzzy
+python-Levenshtein
