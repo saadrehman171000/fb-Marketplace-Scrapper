@@ -7,46 +7,41 @@ import time
 
 def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact):
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_8_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
+        'Accept': '*/*',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Content-Type': 'application/json',
-        'Origin': 'https://www.facebook.com',
-        'Referer': 'https://www.facebook.com/marketplace/',
+        'X-FB-Friendly-Name': 'marketplace_search',
+        'X-FB-LSD': '1',
+        'X-ASBD-ID': '129477',
+        'Origin': 'https://m.facebook.com',
+        'Referer': 'https://m.facebook.com/marketplace/',
     }
 
     try:
-        # Facebook's GraphQL API endpoint
-        url = "https://www.facebook.com/api/graphql/"
-        
-        # GraphQL query variables
+        # Facebook's mobile API endpoint
+        url = "https://m.facebook.com/api/graphql/"
+
+        # Updated query variables for mobile API
         variables = {
-            "count": 24,
-            "cursor": None,
             "params": {
-                "bqf": {
-                    "callsite": "COMMERCE_MKTPLACE_WWW",
+                "marketplace_search": {
                     "query": product,
-                    "regionid": city_code_fb,
-                    "rid": city_code_fb,
-                    "filters": [
-                        {"price_lower_bound": min_price},
-                        {"price_upper_bound": max_price}
-                    ]
+                    "location_id": city_code_fb,
+                    "price_min": min_price,
+                    "price_max": max_price
                 }
-            }
-        }
-        
-        # GraphQL query ID for marketplace search
-        query_id = "7711610262190251"  # This is Facebook's marketplace search query ID
-        
-        data = {
-            "doc_id": query_id,
-            "variables": json.dumps(variables),
-            "fb_api_req_friendly_name": "MarketplaceFeedPaginationQuery"
+            },
+            "scale": 2
         }
 
-        st.info("Sending request to Facebook API...")
+        data = {
+            "fb_api_caller_class": "RelayModern",
+            "fb_api_req_friendly_name": "MarketplaceSearchQuery",
+            "variables": json.dumps(variables),
+            "doc_id": "5026154290794576"  # Mobile API query ID
+        }
+
+        st.info("Sending request to Facebook Mobile API...")
         response = requests.post(url, headers=headers, data=data)
         
         if response.status_code == 200:
@@ -56,24 +51,30 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
                 
                 items = []
                 if 'data' in json_data and 'marketplace_search' in json_data['data']:
-                    listings = json_data['data']['marketplace_search']['edges']
+                    listings = json_data['data']['marketplace_search']['feed_units']
                     for listing in listings:
-                        node = listing['node']
-                        items.append({
-                            'title': node.get('marketplace_listing_title', ''),
-                            'price': node.get('listing_price', {}).get('amount', 0),
-                            'price_text': f"${node.get('listing_price', {}).get('amount', 0)}",
-                            'location': city,
-                            'url': f"https://www.facebook.com/marketplace/item/{node.get('id', '')}"
-                        })
-                
+                        try:
+                            story = listing.get('story')
+                            if story:
+                                items.append({
+                                    'title': story.get('marketplace_listing_title', ''),
+                                    'price': story.get('formatted_price', {}).get('price', 0),
+                                    'price_text': story.get('formatted_price', {}).get('text', '$0'),
+                                    'location': city,
+                                    'url': f"https://www.facebook.com/marketplace/item/{story.get('id', '')}"
+                                })
+                        except Exception as e:
+                            continue
+
                 st.info(f"Found {len(items)} items")
                 return pd.DataFrame(items), len(items)
             except Exception as e:
                 st.error(f"Error processing response: {str(e)}")
+                st.error(f"Response content: {response.text[:200]}...")  # Show first 200 chars of response
                 return pd.DataFrame(), 0
         else:
             st.error(f"API request failed with status code: {response.status_code}")
+            st.error(f"Response content: {response.text[:200]}...")  # Show first 200 chars of response
             return pd.DataFrame(), 0
 
     except Exception as e:
