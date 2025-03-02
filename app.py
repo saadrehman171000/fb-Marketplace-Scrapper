@@ -27,67 +27,95 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
     try:
         st.write("Starting marketplace search...")
         
-        # Construct the public API URL
-        base_url = "https://www.facebook.com/api/graphql/"
+        # Use the public search endpoint
+        search_url = f"https://www.facebook.com/marketplace/search/results/"
         
         # Headers to mimic a browser request
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': '*/*',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Origin': 'https://www.facebook.com',
-            'Referer': 'https://www.facebook.com/marketplace/',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1',
         }
         
         # Query parameters
         params = {
-            'doc_id': '7711610262206673',  # Facebook's Marketplace search doc_id
-            'variables': json.dumps({
-                "count": 24,
-                "cursor": None,
-                "query": product,
-                "filter_location_id": city_code_fb,
-                "location_id": city_code_fb,
-                "price_lower_bound": min_price,
-                "price_upper_bound": max_price
-            })
+            'query': product,
+            'exact': 'false',
+            'latitude': None,
+            'longitude': None,
+            'radius': '60',
+            'minPrice': str(min_price),
+            'maxPrice': str(max_price),
+            'categoryID': 'all',
+            'sortBy': 'best_match',
+            'daysSinceListed': 'all',
+            'deliveryMethod': 'local_pick_up',
+            'locationID': city_code_fb
         }
         
-        st.write("Sending API request...")
-        response = requests.get(base_url, headers=headers, params=params)
+        st.write("Sending request...")
+        st.write(f"URL: {search_url}")
+        st.write(f"Parameters: {params}")
+        
+        items = []  # Initialize items list
+        
+        response = requests.get(search_url, headers=headers, params=params)
+        
+        st.write(f"Response status code: {response.status_code}")
         
         if response.status_code == 200:
             st.write("Response received successfully")
-            data = response.json()
             
-            # Process the response
-            items = []
-            try:
-                listings = data.get('data', {}).get('marketplace_search', {}).get('feed_units', {}).get('edges', [])
-                
-                for listing in listings:
-                    node = listing.get('node', {}).get('listing', {})
-                    if node:
-                        title = node.get('marketplace_listing_title', '')
-                        price = node.get('listing_price', {}).get('amount', 0)
-                        item_id = node.get('id', '')
+            # Parse the HTML response
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Look for marketplace items
+            product_containers = soup.find_all('div', {'class': ['x1n2onr6', 'x6s0dn4']})
+            st.write(f"Found {len(product_containers)} potential product containers")
+            
+            for container in product_containers:
+                try:
+                    # Try to find title and price
+                    title_elem = container.find('span', {'class': 'x1lliihq'})
+                    price_elem = container.find('span', {'class': 'x193iq5w'})
+                    
+                    if title_elem and price_elem:
+                        title = title_elem.text
+                        price_text = price_elem.text
+                        price = ''.join(filter(str.isdigit, price_text))
+                        price = int(price) if price else 0
+                        
+                        # Try to find link
+                        link_elem = container.find('a')
+                        link = f"https://www.facebook.com{link_elem['href']}" if link_elem else "#"
                         
                         items.append({
                             'title': title,
                             'price': price,
-                            'link': f"https://www.facebook.com/marketplace/item/{item_id}",
+                            'link': link,
                             'city': city,
                             'search_term': product
                         })
                         st.write(f"Found item: {title} - ${price}")
+                
+                except Exception as e:
+                    st.write(f"Error processing container: {str(e)}")
+                    continue
             
-            except Exception as e:
-                st.write(f"Error processing response: {str(e)}")
-                st.write("Response structure:", data)
-        
+            # Show sample of HTML for debugging
+            st.write("Sample of response HTML:")
+            st.code(response.text[:500])
+            
         else:
-            st.error(f"API request failed with status code: {response.status_code}")
+            st.error(f"Request failed with status code: {response.status_code}")
+            st.write("Response headers:", dict(response.headers))
             st.write("Response content:", response.text[:500])
         
         if items:
@@ -100,7 +128,7 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
             return pd.DataFrame(), 0
             
     except Exception as e:
-        st.error(f"Error during API request: {str(e)}")
+        st.error(f"Error during request: {str(e)}")
         return pd.DataFrame(), 0
 
 # Streamlit UI
