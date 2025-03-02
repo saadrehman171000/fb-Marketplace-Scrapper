@@ -17,6 +17,9 @@ import os
 import random
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+import requests
+import json
+from requests_html import HTMLSession
 
 # Function to run the web scraping for exact matches
 def scrape_facebook_marketplace_exact(city, product, min_price, max_price, city_code_fb):
@@ -27,165 +30,42 @@ def scrape_facebook_marketplace_partial(city, product, min_price, max_price, cit
     return scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact=False)
 
 # Main scraping function with an exact match flag
-def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact, sleep_time=3):
-    chrome_options = uc.ChromeOptions()
+def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact):
+    session = HTMLSession()
     
-    # Basic anti-detection options
-    chrome_options.add_argument('--no-sandbox')
-    chrome_options.add_argument('--disable-dev-shm-usage')
-    chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-    chrome_options.add_argument("--disable-notifications")
-    chrome_options.add_argument('--window-size=1920,1080')
-    chrome_options.add_argument("--start-maximized")
-    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.224 Safari/537.36')
+    url = f"https://www.facebook.com/marketplace/search/?query={product}&exact=true&minPrice={min_price}&maxPrice={max_price}"
     
     try:
-        os.makedirs('.chrome', exist_ok=True)
-        
-        browser = uc.Chrome(
-            options=chrome_options,
-            version_main=120,
-            headless=True,
-            use_subprocess=True
-        )
-        st.info("Browser initialized successfully")
-        
-        # Define selectors before the URL loop
-        selectors = [
-            "div[role='main'] a[role='link']",
-            "div[style*='border-radius: max(0px, min(8px, calc((100vw - 4px - 100%) * 9999))) / 8px']",
-            "div[class*='x3ct3a4']"
-        ]
-        
-        # Try different URL formats
-        exact_param = 'true' if exact else 'false'
-        urls = [
-            f"https://www.facebook.com/marketplace/search/?query={product}&exact={exact_param}&minPrice={min_price}&maxPrice={max_price}",
-            f"https://www.facebook.com/marketplace/category/search/?query={product}&exact={exact_param}&minPrice={min_price}&maxPrice={max_price}",
-            f"https://www.facebook.com/marketplace/{city_code_fb}/search/?query={product}&exact={exact_param}&minPrice={min_price}&maxPrice={max_price}"
-        ]
-
-        items = []
-        for url in urls:
-            try:
-                st.info(f"Attempting to access URL: {url}")
-                browser.get(url)
-                time.sleep(10)  # Wait for page load
-                
-                # Check each selector
-                for selector in selectors:
-                    items = browser.find_elements(By.CSS_SELECTOR, selector)
-                    if len(items) > 0:
-                        st.info(f"Found {len(items)} items using selector: {selector}")
-                        break
-                
-                if len(items) > 0:
-                    break  # Found items, use this URL
-            except Exception as e:
-                st.warning(f"Failed with URL {url}: {str(e)}")
-                continue
-
-        st.info("Page loaded, checking for elements...")
-        
-        # Updated selectors for better targeting
-        selectors = [
-            "div[role='main'] a[role='link']",
-            "div[style*='border-radius: max(0px, min(8px, calc((100vw - 4px - 100%) * 9999))) / 8px']",
-            "div[class*='x3ct3a4']"
-        ]
+        r = session.get(url)
+        r.html.render(timeout=30)  # Renders JavaScript
         
         items = []
-        for selector in selectors:
-            items = browser.find_elements(By.CSS_SELECTOR, selector)
-            if len(items) > 0:
-                st.info(f"Found {len(items)} total items after scrolling using selector: {selector}")
-                break
+        # Find all marketplace items
+        listings = r.html.find('div[role="main"] a[role="link"]')
         
-        # Update the title selectors
-        title_selectors = [
-            "span[class*='x1lliihq']:not([class*='x193iq5w'])",  # Title text, excluding price
-            "div[class*='x1gslohp'] span",  # Alternative title container
-            "span[class*='xt0psk2']"  # Another common title class
-        ]
-
-        # Update the price selectors
-        price_selectors = [
-            "span[class*='x193iq5w']",  # Main price class
-            "span[class*='x1s928wv']",  # Alternative price class
-            "span[class*='x1lliihq'][class*='x193iq5w']"  # Combined price classes
-        ]
-
-        # Extract data from items
-        extracted_data = []
-        for item in items:
+        for listing in listings:
             try:
-                # Get title
-                title = None
-                for selector in title_selectors:
-                    try:
-                        title_elem = item.find_element(By.CSS_SELECTOR, selector)
-                        title = title_elem.text.strip()
-                        if title and not title.startswith('$') and not title.lower() == 'free':
-                            break
-                    except:
-                        continue
-
-                # Get price
-                price = None
-                price_text = None
-                for selector in price_selectors:
-                    try:
-                        price_elem = item.find_element(By.CSS_SELECTOR, selector)
-                        price_text = price_elem.text.strip()
-                        if price_text:
-                            if price_text.lower() == 'free':
-                                price = 0
-                            else:
-                                price = float(price_text.replace('$', '').replace(',', ''))
-                            break
-                    except:
-                        continue
-
-                # Get URL
-                url = item.get_attribute('href')
-                if not url:
-                    try:
-                        url = item.find_element(By.CSS_SELECTOR, "a").get_attribute('href')
-                    except:
-                        continue
-
-                if title and url:  # Only add items with at least title and URL
-                    extracted_data.append({
-                        'title': title,
-                        'price': price,
-                        'price_text': price_text,  # Keep original price text
-                        'location': city,
-                        'url': url
-                    })
-                    st.info(f"Found item: {title} - {price_text}")  # Debug info
-
-            except Exception as e:
-                st.warning(f"Failed to extract item data: {str(e)}")
+                title = listing.find('span', containing=product, first=True).text
+                price = listing.find('span[class*="x193iq5w"]', first=True).text
+                url = listing.absolute_links.pop()
+                
+                items.append({
+                    'title': title,
+                    'price': float(price.replace('$', '').replace(',', '')),
+                    'price_text': price,
+                    'location': city,
+                    'url': url
+                })
+            except:
                 continue
-        
-        st.info(f"Successfully extracted {len(extracted_data)} items")
-        
-        # Create DataFrame with better column ordering
-        items_df = pd.DataFrame(extracted_data)
-        if not items_df.empty:
-            items_df = items_df[['title', 'price', 'price_text', 'location', 'url']]
-            
-        return items_df, len(items)
+                
+        return pd.DataFrame(items), len(items)
         
     except Exception as e:
         st.error(f"Error during scraping: {str(e)}")
         return pd.DataFrame(), 0
     finally:
-        try:
-            browser.quit()
-            st.info("Browser closed successfully")
-        except:
-            st.warning("Could not close browser properly")
+        session.close()
 
 # Streamlit UI
 st.set_page_config(page_title="Facebook Marketplace Scraper", layout="wide")
