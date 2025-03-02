@@ -8,6 +8,8 @@ import zipfile
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+import json
+import requests
 
 def setup_driver():
     chrome_options = Options()
@@ -19,101 +21,74 @@ def setup_driver():
     return webdriver.Chrome(options=chrome_options)
 
 def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb):
-    driver = None
     try:
         st.write("Starting scraper...")
-        driver = setup_driver()
-        marketplace_url = f"https://www.facebook.com/marketplace/{city_code_fb}/search?query={product}&minPrice={min_price}&maxPrice={max_price}"
-        st.write(f"Accessing URL: {marketplace_url}")
         
-        driver.get(marketplace_url)
-        time.sleep(10)  # Increased wait time for initial load
+        # Use the public API endpoint
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
         
-        # Debug: Print page title and URL
-        st.write(f"Current page title: {driver.title}")
-        st.write(f"Current URL: {driver.current_url}")
+        # Construct the API URL
+        api_url = f"https://www.facebook.com/api/graphql/"
         
-        # Wait for main content to load
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.TAG_NAME, "body"))
-        )
+        # GraphQL query parameters
+        params = {
+            'variables': json.dumps({
+                "marketplace_search_params": {
+                    "query": product,
+                    "latitude": None,
+                    "longitude": None,
+                    "radius": 60,
+                    "locale": "en_US",
+                    "city_id": city_code_fb,
+                    "price_lower_bound": min_price,
+                    "price_upper_bound": max_price
+                }
+            }),
+            'doc_id': '7711610262206673'  # This is Facebook's Marketplace search doc_id
+        }
         
-        # Try different selectors for product cards
-        selectors = [
-            "div[role='main'] a[role='link']",  # Main content links
-            "div[style*='width: 100%']",        # Product cards
-            "a[href*='/marketplace/item/']"     # Direct item links
-        ]
+        st.write(f"Sending request to Facebook API...")
         
-        items = []
-        for selector in selectors:
-            st.write(f"Trying selector: {selector}")
-            product_cards = driver.find_elements(By.CSS_SELECTOR, selector)
-            if product_cards:
-                st.write(f"Found {len(product_cards)} items with selector {selector}")
-                break
+        # Make the request
+        response = requests.get(api_url, headers=headers, params=params)
         
-        if not product_cards:
-            st.error("No products found. The page might have a different structure.")
-            return pd.DataFrame(), 0
-        
-        for card in product_cards[:10]:  # Limit to first 10 items for testing
+        if response.status_code == 200:
+            data = response.json()
+            st.write("Response received, processing data...")
+            
+            # Process the response
+            items = []
             try:
-                # Get the HTML of the card for debugging
-                card_html = card.get_attribute('outerHTML')
-                st.write(f"Processing card: {card_html[:200]}...")  # Show first 200 chars
-                
-                # Try different ways to get title and price
-                try:
-                    title = card.find_element(By.CSS_SELECTOR, "span").text
-                except:
-                    title = "Title not found"
-                
-                try:
-                    price = card.find_element(By.CSS_SELECTOR, "span[style*='color']").text
-                except:
-                    price = "Price not found"
-                
-                try:
-                    link = card.get_attribute("href")
-                except:
-                    link = "Link not found"
-                
-                st.write(f"Found item: {title} - {price}")
-                
-                # Clean price
-                price_clean = ''.join(filter(str.isdigit, price))
-                price_clean = int(price_clean) if price_clean else 0
-                
-                items.append({
-                    'title': title,
-                    'price': price_clean,
-                    'link': link,
-                    'city': city,
-                    'search_term': product
-                })
-                
-            except Exception as e:
-                st.write(f"Error processing card: {str(e)}")
-                continue
+                edges = data['data']['marketplace_search']['feed_units']['edges']
+                for edge in edges:
+                    node = edge['node']
+                    items.append({
+                        'title': node['listing']['marketplace_listing_title'],
+                        'price': node['listing']['listing_price']['amount'],
+                        'link': f"https://www.facebook.com/marketplace/item/{node['listing']['id']}",
+                        'city': city,
+                        'search_term': product
+                    })
+            except KeyError as e:
+                st.write(f"Error processing response: {str(e)}")
+                st.write("Response structure:", data)
         
-        if items:
             df = pd.DataFrame(items)
             st.write("Scraped data preview:")
             st.write(df.head())
             return df, len(items)
+            
         else:
-            st.error("No items could be scraped")
+            st.error(f"Failed to get data: Status code {response.status_code}")
             return pd.DataFrame(), 0
             
     except Exception as e:
         st.error(f"Error during scraping: {str(e)}")
         return pd.DataFrame(), 0
-        
-    finally:
-        if driver:
-            st.write("Closing browser...")
-            driver.quit()
 
 # Streamlit UI
 st.set_page_config(page_title="Facebook Marketplace Scraper", layout="wide")
