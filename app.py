@@ -14,6 +14,8 @@ import zipfile
 import io
 import os
 import random
+import json
+import requests
 
 # Function to run the web scraping for exact matches
 def scrape_facebook_marketplace_exact(city, product, min_price, max_price, city_code_fb):
@@ -25,157 +27,119 @@ def scrape_facebook_marketplace_partial(city, product, min_price, max_price, cit
 
 # Main scraping function with an exact match flag
 def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact, sleep_time=3):
-    chrome_options = Options()
-    chrome_options.add_argument('--headless=new')
-    chrome_options.add_argument('--no-sandbox')
-    chrome_options.add_argument('--disable-dev-shm-usage')
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-    chrome_options.add_argument('--start-maximized')
-    chrome_options.add_argument('--window-size=1920,1080')
-    chrome_options.add_argument(f'--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-    
-    # Add required preferences
-    prefs = {
-        "profile.default_content_setting_values.notifications": 2,
-        "credentials_enable_service": False,
-        "profile.password_manager_enabled": False,
-        "profile.managed_default_content_settings.images": 1
-    }
-    chrome_options.add_experimental_option("prefs", prefs)
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-    
     try:
-        service = Service('/usr/bin/chromedriver')
-        browser = webdriver.Chrome(service=service, options=chrome_options)
+        st.info("Starting marketplace search...")
         
-        # Add anti-detection script
-        browser.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-            'source': '''
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => [1, 2, 3, 4, 5]
-                });
-            '''
-        })
+        # Use Facebook's public GraphQL API
+        base_url = "https://www.facebook.com/api/graphql/"
         
-        st.info("Browser initialized successfully")
+        # Headers to mimic a browser request
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1',
+            'X-Fb-Friendly-Name': 'MarketplaceFeedPaginationQuery',
+        }
         
-        exact_param = 'true' if exact else 'false'
+        # Query parameters
+        params = {
+            'doc_id': '6474263079339547',  # Facebook's Marketplace feed doc_id
+            'variables': json.dumps({
+                "UFI2CommentsProvider_commentsKey": "MarketplaceFeed",
+                "count": 24,
+                "cursor": None,
+                "feedType": "MARKET_SEARCH",
+                "params": {
+                    "bqf": {
+                        "callsite": "COMMERCE_MKTPLACE_WWW",
+                        "query": product
+                    },
+                    "browse_request_params": {
+                        "commerce_enable_local_pickup": True,
+                        "commerce_search_and_rp_available": True,
+                        "commerce_search_and_rp_category_id": [],
+                        "commerce_search_and_rp_condition": None,
+                        "commerce_search_and_rp_ctime_days": None,
+                        "filter_location_id": city_code_fb,
+                        "price_lower_bound": min_price,
+                        "price_upper_bound": max_price
+                    }
+                }
+            })
+        }
         
-        # Try different URL formats
-        urls = [
-            f"https://www.facebook.com/marketplace/{city_code_fb}/search/?query={product}&exact={exact_param}&minPrice={min_price}&maxPrice={max_price}",
-            f"https://www.facebook.com/marketplace/search/?query={product}&exact={exact_param}&minPrice={min_price}&maxPrice={max_price}&region_id={city_code_fb}",
-            f"https://m.facebook.com/marketplace/{city_code_fb}/search/?query={product}"
-        ]
+        st.info("Sending API request...")
+        response = requests.get(base_url, headers=headers, params=params)
         
-        for url in urls:
-            st.info(f"Attempting to access URL: {url}")
-            browser.get(url)
-            time.sleep(15)
-            
-            if "login" not in browser.current_url.lower():
-                st.info("Successfully accessed marketplace without login redirect")
-                break
-            else:
-                st.warning(f"Login redirect detected for URL: {url}")
+        st.info(f"Response status: {response.status_code}")
         
-        st.info("Page loaded, checking for elements...")
-        
-        # Update the selectors to better target marketplace items
-        selectors = [
-            "div[class*='x3ct3a4'] a[role='link']",  # Main container with link
-            "div[class*='x1xmf6yo']",  # Product card container
-            "div[role='main'] div[style*='border-radius: 8px']"  # Product cards by style
-        ]
-        
-        items = []
-        for selector in selectors:
-            items = browser.find_elements(By.CSS_SELECTOR, selector)
-            if len(items) > 0:
-                st.info(f"Found {len(items)} items using selector: {selector}")
-                break
-        
-        # Scroll with random delays
-        count = 0
-        last_height = browser.execute_script("return document.body.scrollHeight")
-        while count < 5:
-            scroll_amount = random.randint(300, 800)
-            browser.execute_script(f"window.scrollBy(0, {scroll_amount});")
-            time.sleep(random.uniform(2.0, 4.0))
-            new_height = browser.execute_script("return document.body.scrollHeight")
-            count += 1
-            st.info(f"Scroll iteration {count}/5")
-            if new_height == last_height:
-                break
-            last_height = new_height
-            
-        # Try to find items again after scrolling
-        for selector in selectors:
-            items = browser.find_elements(By.CSS_SELECTOR, selector)
-            if len(items) > 0:
-                st.info(f"Found {len(items)} total items after scrolling using selector: {selector}")
-                break
-        
-        # Extract data from items
-        extracted_data = []
-        for item in items:
+        if response.status_code == 200:
             try:
-                # Get all text content
-                text_content = item.text
-                st.write(f"Processing element with text: {text_content[:100]}")
+                data = response.json()
+                st.info("Successfully parsed JSON response")
                 
-                # Look for price and title
-                if '$' in text_content:
-                    lines = text_content.split('\n')
-                    price_line = next((line for line in lines if '$' in line), None)
-                    
-                    if price_line:
-                        price = ''.join(filter(str.isdigit, price_line))
-                        price = int(price) if price else 0
+                # Extract items from the response
+                extracted_data = []
+                edges = data.get('data', {}).get('marketplace_search', {}).get('feed_units', {}).get('edges', [])
+                
+                for edge in edges:
+                    try:
+                        node = edge.get('node', {})
+                        listing = node.get('listing', {})
                         
-                        # Title is usually the longest line without $ or special characters
-                        title_candidates = [line for line in lines if '$' not in line and len(line) > 5]
-                        title = max(title_candidates, key=len) if title_candidates else "Unknown Title"
-                        
-                        link = item.get_attribute('href') or '#'
-                        
-                        if price > 0 and title:
+                        if listing:
+                            title = listing.get('marketplace_listing_title', '')
+                            price = listing.get('listing_price', {}).get('amount', 0)
+                            url = f"https://www.facebook.com/marketplace/item/{listing.get('id', '')}"
+                            
                             extracted_data.append({
-                                'title': title.strip(),
+                                'title': title,
                                 'price': price,
-                                'price_text': price_line,
+                                'price_text': f"${price}",
                                 'location': city,
-                                'url': link
+                                'url': url
                             })
-                            st.info(f"Added item: {title.strip()} - ${price}")
+                            st.info(f"Found item: {title} - ${price}")
+                    
+                    except Exception as e:
+                        st.warning(f"Error processing listing: {str(e)}")
+                        continue
+                
+                st.info(f"Successfully extracted {len(extracted_data)} items")
+                
+                # Create DataFrame
+                items_df = pd.DataFrame(extracted_data)
+                if not items_df.empty:
+                    items_df = items_df[['title', 'price', 'price_text', 'location', 'url']]
+                
+                return items_df, len(extracted_data)
             
             except Exception as e:
-                st.warning(f"Failed to extract item data: {str(e)}")
-                continue
-        
-        st.info(f"Successfully extracted {len(extracted_data)} items")
-        
-        # Create DataFrame
-        items_df = pd.DataFrame(extracted_data)
-        if not items_df.empty:
-            items_df = items_df[['title', 'price', 'price_text', 'location', 'url']]
+                st.error(f"Error parsing response: {str(e)}")
+                st.info("Response content:")
+                st.code(response.text[:500])
+                return pd.DataFrame(), 0
+        else:
+            st.error(f"API request failed with status {response.status_code}")
+            st.info("Response headers:")
+            st.write(dict(response.headers))
+            st.info("Response content:")
+            st.code(response.text[:500])
+            return pd.DataFrame(), 0
             
-        return items_df, len(items)
-        
     except Exception as e:
-        st.error(f"Error during scraping: {str(e)}")
+        st.error(f"Error during API request: {str(e)}")
         return pd.DataFrame(), 0
-    finally:
-        try:
-            browser.quit()
-            st.info("Browser closed successfully")
-        except:
-            st.warning("Could not close browser properly")
 
 # Streamlit UI
 st.set_page_config(page_title="Facebook Marketplace Scraper", layout="wide")
