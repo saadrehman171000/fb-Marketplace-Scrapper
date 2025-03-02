@@ -101,19 +101,33 @@ if "marketplaces" not in st.session_state:
 if "scraped_data" not in st.session_state:
     st.session_state["scraped_data"] = None
 
-# Add login section
+# Near the top of your file
+if 'fb_session' not in st.session_state:
+    st.session_state.fb_session = None
+    st.session_state.logged_in = False
+
+# Modify the login section
 with st.sidebar:
     st.header("Facebook Login")
-    with st.form("login_form"):
-        # Use environment variables as default values
-        email = st.text_input("Email", value=os.getenv('FACEBOOK_EMAIL', ''), type="default")
-        password = st.text_input("Password", value=os.getenv('FACEBOOK_PASSWORD', ''), type="password")
-        login_button = st.form_submit_button("Login")
-        
-        if login_button and email and password:
-            session = facebook_login(email, password)
-            if session:
-                st.session_state['fb_session'] = session
+    
+    if not st.session_state.logged_in:
+        with st.form("login_form"):
+            email = st.text_input("Email", value=os.getenv('FACEBOOK_EMAIL', ''), type="default")
+            password = st.text_input("Password", value=os.getenv('FACEBOOK_PASSWORD', ''), type="password")
+            login_button = st.form_submit_button("Login")
+            
+            if login_button and email and password:
+                session = facebook_login(email, password)
+                if session:
+                    st.session_state.fb_session = session
+                    st.session_state.logged_in = True
+                    st.rerun()  # Rerun the app to update the UI
+    else:
+        st.success("Already logged in!")
+        if st.button("Logout"):
+            st.session_state.fb_session = None
+            st.session_state.logged_in = False
+            st.rerun()
 
 # Input fields with better layout and styling
 with st.form(key='input_form'):
