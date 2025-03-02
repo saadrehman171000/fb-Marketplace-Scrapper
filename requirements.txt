@@ -2,6 +2,6 @@ streamlit
 requests
 pandas
 python-dotenv
-selenium
-webdriver_manager
 beautifulsoup4
+selenium
+webdriver-manager>=3.8.0
