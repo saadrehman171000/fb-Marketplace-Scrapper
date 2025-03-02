@@ -25,102 +25,50 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
     try:
         st.write("Starting scraper...")
         
-        # Setup Chrome options with additional arguments to avoid detection
+        # Setup Chrome options with minimal configuration
         chrome_options = Options()
         chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
 
         driver = webdriver.Chrome(options=chrome_options)
-        driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-            'source': '''
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                })
-            '''
-        })
         
-        # Use the mobile site URL
-        url = f"https://www.facebook.com/marketplace/category/search?query={product}&minPrice={min_price}&maxPrice={max_price}&exact=false"
+        # Use a simpler URL format
+        url = f"https://www.facebook.com/marketplace/search?query={product}&exact=false"
         st.write(f"Accessing URL: {url}")
         
         driver.get(url)
-        time.sleep(5)  # Wait for initial load
+        st.write("Waiting for page to load...")
+        time.sleep(10)  # Longer initial wait
         
-        # Scroll a few times to load more content
-        for _ in range(3):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
-        
-        # Wait for marketplace items to load
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "div[style*='width']"))
-        )
-        
-        # Find all product listings
-        items = []
-        product_cards = driver.find_elements(By.CSS_SELECTOR, "div[style*='width']")
-        
-        st.write(f"Found {len(product_cards)} potential listings")
-        
-        for card in product_cards:
-            try:
-                # Try multiple selectors for title and price
-                try:
-                    title = card.find_element(By.CSS_SELECTOR, "span[style*='line-clamp']").text
-                except:
-                    try:
-                        title = card.find_element(By.CSS_SELECTOR, "span[dir='auto']").text
-                    except:
-                        continue
-                
-                try:
-                    price = card.find_element(By.CSS_SELECTOR, "span[style*='color']").text
-                except:
-                    try:
-                        price = card.find_element(By.CSS_SELECTOR, "span:not([style])").text
-                    except:
-                        continue
-                
-                # Clean price
-                price_clean = ''.join(filter(str.isdigit, price))
-                price_clean = int(price_clean) if price_clean else 0
-                
-                # Get link
-                try:
-                    link = card.find_element(By.CSS_SELECTOR, "a").get_attribute("href")
-                except:
-                    link = "#"
-                
-                if title and price:
-                    items.append({
-                        'title': title,
-                        'price': price_clean,
-                        'link': link,
-                        'city': city,
-                        'search_term': product
-                    })
-                    st.write(f"Found item: {title} - {price}")
-                
-            except Exception as e:
-                st.write(f"Error processing item: {str(e)}")
-                continue
+        try:
+            # Wait for any element to be present
+            element = WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            
+            # Get page source for debugging
+            page_source = driver.page_source
+            st.write(f"Page source length: {len(page_source)}")
+            
+            # Try to find any content
+            content = driver.find_elements(By.TAG_NAME, "div")
+            st.write(f"Found {len(content)} div elements")
+            
+            # Save HTML for debugging
+            with open("debug.html", "w", encoding="utf-8") as f:
+                f.write(page_source)
+            st.write("Saved page source to debug.html")
+            
+        except Exception as e:
+            st.error(f"Error waiting for elements: {str(e)}")
         
         driver.quit()
+        st.write("Browser closed")
         
-        if items:
-            df = pd.DataFrame(items)
-            st.write("Scraped data preview:")
-            st.write(df.head())
-            return df, len(items)
-        else:
-            st.warning("No items found in the parsed content")
-            return pd.DataFrame(), 0
+        # Return empty results for now
+        return pd.DataFrame(), 0
             
     except Exception as e:
         st.error(f"Error during scraping: {str(e)}")
