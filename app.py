@@ -1,71 +1,76 @@
 ﻿import streamlit as st
-import undetected_chromedriver as uc
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from webdriver_manager.chrome import ChromeDriverManager
-from bs4 import BeautifulSoup
-import re
-import pandas as pd
-import time
-from fuzzywuzzy import fuzz
-from datetime import datetime
-from selenium.webdriver.chrome.options import Options
-import zipfile
-import io
-import os
-import random
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 import requests
+from bs4 import BeautifulSoup
+import pandas as pd
 import json
-from requests_html import HTMLSession
+import time
 
-# Function to run the web scraping for exact matches
-def scrape_facebook_marketplace_exact(city, product, min_price, max_price, city_code_fb):
-    return scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact=True)
-
-# Function to run the web scraping for partial matches
-def scrape_facebook_marketplace_partial(city, product, min_price, max_price, city_code_fb):
-    return scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact=False)
-
-# Main scraping function with an exact match flag
 def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact):
-    session = HTMLSession()
-    
-    url = f"https://www.facebook.com/marketplace/search/?query={product}&exact=true&minPrice={min_price}&maxPrice={max_price}"
-    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    }
+
     try:
-        r = session.get(url)
-        r.html.render(timeout=30)  # Renders JavaScript
-        
+        # Try different URL formats
+        urls = [
+            f"https://www.facebook.com/marketplace/search/?query={product}&minPrice={min_price}&maxPrice={max_price}",
+            f"https://www.facebook.com/marketplace/{city_code_fb}/search/?query={product}&minPrice={min_price}&maxPrice={max_price}",
+            f"https://www.facebook.com/marketplace/category/search/?query={product}&minPrice={min_price}&maxPrice={max_price}"
+        ]
+
         items = []
-        # Find all marketplace items
-        listings = r.html.find('div[role="main"] a[role="link"]')
-        
-        for listing in listings:
+        for url in urls:
             try:
-                title = listing.find('span', containing=product, first=True).text
-                price = listing.find('span[class*="x193iq5w"]', first=True).text
-                url = listing.absolute_links.pop()
+                st.info(f"Trying URL: {url}")
+                response = requests.get(url, headers=headers)
+                soup = BeautifulSoup(response.text, 'html.parser')
                 
-                items.append({
-                    'title': title,
-                    'price': float(price.replace('$', '').replace(',', '')),
-                    'price_text': price,
-                    'location': city,
-                    'url': url
-                })
-            except:
+                # Find marketplace listings
+                listings = soup.find_all('div', {'role': 'main'})
+                if listings:
+                    for listing in listings:
+                        try:
+                            # Extract title
+                            title_elem = listing.find('span', {'class': 'x1lliihq'})
+                            title = title_elem.text if title_elem else None
+                            
+                            # Extract price
+                            price_elem = listing.find('span', {'class': 'x193iq5w'})
+                            price_text = price_elem.text if price_elem else None
+                            price = float(price_text.replace('$', '').replace(',', '')) if price_text else None
+                            
+                            # Extract URL
+                            link = listing.find('a', {'role': 'link'})
+                            url = link.get('href') if link else None
+                            
+                            if title and url:
+                                items.append({
+                                    'title': title,
+                                    'price': price,
+                                    'price_text': price_text,
+                                    'location': city,
+                                    'url': f"https://www.facebook.com{url}" if url.startswith('/') else url
+                                })
+                        except Exception as e:
+                            continue
+                    
+                    if items:
+                        break  # Stop if we found items
+                        
+            except Exception as e:
+                st.warning(f"Failed with URL {url}: {str(e)}")
                 continue
-                
-        return pd.DataFrame(items), len(items)
-        
+
+        df = pd.DataFrame(items)
+        return df, len(items)
+
     except Exception as e:
         st.error(f"Error during scraping: {str(e)}")
         return pd.DataFrame(), 0
-    finally:
-        session.close()
 
 # Streamlit UI
 st.set_page_config(page_title="Facebook Marketplace Scraper", layout="wide")
@@ -138,12 +143,13 @@ if submit_button:
         combined_df = pd.DataFrame()
         for marketplace in st.session_state["marketplaces"]:
             with st.spinner(f"Scraping data for {marketplace['city']}..."):
-                items_df, total_links = scrape_facebook_marketplace_exact(
+                items_df, total_links = scrape_facebook_marketplace(
                     marketplace["city"],
                     marketplace["product"],
                     marketplace["min_price"],
                     marketplace["max_price"],
-                    marketplace["city_code_fb"]
+                    marketplace["city_code_fb"],
+                    exact=True
                 )
 
             if not items_df.empty:
