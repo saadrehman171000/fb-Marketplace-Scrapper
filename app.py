@@ -5,6 +5,7 @@ from selenium.webdriver.chrome.options import Options
 import time
 import io
 import zipfile
+from selenium.webdriver.common.by import By
 
 def setup_driver():
     chrome_options = Options()
@@ -20,16 +21,50 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
         driver = setup_driver()
         marketplace_url = f"https://www.facebook.com/marketplace/{city_code_fb}/search?query={product}&minPrice={min_price}&maxPrice={max_price}"
         driver.get(marketplace_url)
-        time.sleep(5)  # Wait for page to load
+        time.sleep(5)  # Initial load wait
         
-        # Add your scraping logic here
-        # This is where you'll implement the actual data collection
+        # Initialize list to store items
+        items = []
+        
+        # Scroll a few times to load more items
+        for _ in range(3):
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+        
+        # Find all product cards
+        product_cards = driver.find_elements(By.CSS_SELECTOR, "div[style*='width: 100%']")
+        
+        for card in product_cards:
+            try:
+                # Extract product details
+                title = card.find_element(By.CSS_SELECTOR, "span[style*='webkit-line-clamp: 2']").text
+                price = card.find_element(By.CSS_SELECTOR, "span[style*='color: rgb(5, 5, 5)']").text
+                link = card.find_element(By.CSS_SELECTOR, "a").get_attribute("href")
+                
+                # Clean price (remove currency symbol and convert to number)
+                price_clean = ''.join(filter(str.isdigit, price))
+                price_clean = int(price_clean) if price_clean else 0
+                
+                items.append({
+                    'title': title,
+                    'price': price_clean,
+                    'link': link,
+                    'city': city,
+                    'search_term': product
+                })
+            except Exception as e:
+                continue
         
         driver.quit()
-        return pd.DataFrame(), 0  # Placeholder return
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(items)
+        return df, len(items)
         
     except Exception as e:
         st.error(f"Error during scraping: {str(e)}")
+        if 'driver' in locals():
+            driver.quit()
         return pd.DataFrame(), 0
 
 # Streamlit UI
