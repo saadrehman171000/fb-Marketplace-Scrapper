@@ -12,6 +12,23 @@ import os
 
 load_dotenv()  # Load environment variables from .env file
 
+def init_session_state():
+    if 'fb_session' not in st.session_state:
+        st.session_state.fb_session = None
+        st.session_state.logged_in = False
+
+def auto_login():
+    email = os.getenv('FACEBOOK_EMAIL')
+    password = os.getenv('FACEBOOK_PASSWORD')
+    
+    if email and password and not st.session_state.logged_in:
+        session = facebook_login(email, password)
+        if session:
+            st.session_state.fb_session = session
+            st.session_state.logged_in = True
+            return True
+    return False
+
 def facebook_login(email, password):
     session = requests.Session()
     headers = {
@@ -68,11 +85,16 @@ def facebook_login(email, password):
         st.error(f"Login error: {str(e)}")
         return None
 
-def scrape_facebook_marketplace(session, city, product, min_price, max_price, city_code_fb, exact):
-    if not session:
-        st.error("No active Facebook session. Please log in first.")
-        return pd.DataFrame(), 0
-        
+def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact):
+    if not st.session_state.fb_session:
+        # Try auto-login one more time
+        if not auto_login():
+            st.error("No active Facebook session. Please log in first.")
+            return pd.DataFrame(), 0
+    
+    # Use the session from session state
+    session = st.session_state.fb_session
+    
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json',
@@ -101,22 +123,11 @@ if "marketplaces" not in st.session_state:
 if "scraped_data" not in st.session_state:
     st.session_state["scraped_data"] = None
 
-# Near the top of your file
-if 'fb_session' not in st.session_state:
-    st.session_state.fb_session = None
-    st.session_state.logged_in = False
+# Initialize session state
+init_session_state()
 
-# Auto-login using environment variables
-if not st.session_state.logged_in:
-    email = os.getenv('FACEBOOK_EMAIL')
-    password = os.getenv('FACEBOOK_PASSWORD')
-    
-    if email and password:
-        session = facebook_login(email, password)
-        if session:
-            st.session_state.fb_session = session
-            st.session_state.logged_in = True
-            st.rerun()
+# Try auto-login before rendering anything
+auto_login()
 
 # Only show login form if auto-login failed
 with st.sidebar:
@@ -201,7 +212,6 @@ if submit_button:
             for marketplace in st.session_state["marketplaces"]:
                 with st.spinner(f"Scraping data for {marketplace['city']}..."):
                     items_df, total_links = scrape_facebook_marketplace(
-                        st.session_state['fb_session'],
                         marketplace["city"],
                         marketplace["product"],
                         marketplace["min_price"],
