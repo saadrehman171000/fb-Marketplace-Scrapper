@@ -17,12 +17,11 @@ import subprocess
 
 def get_chromium_version():
     try:
-        # Get Chromium version from the system
         result = subprocess.run(['chromium', '--version'], capture_output=True, text=True)
-        version = result.stdout.split()[1]  # Format: "Chromium XX.X.XXXX.XX"
-        return version.split('.')[0]  # Return major version number
+        version = result.stdout.split()[1]
+        return version
     except:
-        return "120"  # Default to version 120 if we can't detect
+        return "120.0.6099.224"
 
 def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb):
     try:
@@ -33,16 +32,17 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
-        chrome_options.binary_location = "/usr/bin/chromium"  # Specify Chromium binary location
+        chrome_options.binary_location = "/usr/bin/chromium"
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
-        # Get the correct ChromeDriver version
+        # Get Chromium version
         chromium_version = get_chromium_version()
         st.write(f"Detected Chromium version: {chromium_version}")
         
-        # Use specific version of ChromeDriver
+        # Use default ChromeDriver installation
+        service = Service('/usr/bin/chromedriver')
         driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager(version="120.0.6099.109").install()),
+            service=service,
             options=chrome_options
         )
         
