@@ -25,82 +25,107 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
     try:
         st.write("Starting scraper...")
         
-        # Use mobile site URL
-        url = f"https://m.facebook.com/marketplace/{city_code_fb}/search/?query={product}&minPrice={min_price}&maxPrice={max_price}"
+        # Setup Chrome options with additional arguments to avoid detection
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+            'source': '''
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                })
+            '''
+        })
         
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1'
-        }
-        
+        # Use the mobile site URL
+        url = f"https://www.facebook.com/marketplace/category/search?query={product}&minPrice={min_price}&maxPrice={max_price}&exact=false"
         st.write(f"Accessing URL: {url}")
         
-        response = requests.get(url, headers=headers)
+        driver.get(url)
+        time.sleep(5)  # Wait for initial load
         
-        if response.status_code == 200:
-            st.write("Page accessed successfully, parsing content...")
-            
-            # Parse the HTML content
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Find all product listings
-            items = []
-            product_cards = soup.find_all('div', {'class': ['_7g1d', '_1c2u']})  # Common marketplace item classes
-            
-            st.write(f"Found {len(product_cards)} potential listings")
-            
-            for card in product_cards:
+        # Scroll a few times to load more content
+        for _ in range(3):
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+        
+        # Wait for marketplace items to load
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div[style*='width']"))
+        )
+        
+        # Find all product listings
+        items = []
+        product_cards = driver.find_elements(By.CSS_SELECTOR, "div[style*='width']")
+        
+        st.write(f"Found {len(product_cards)} potential listings")
+        
+        for card in product_cards:
+            try:
+                # Try multiple selectors for title and price
                 try:
-                    # Extract title
-                    title_elem = card.find('div', {'class': '_1oem'})
-                    title = title_elem.text if title_elem else "No title"
-                    
-                    # Extract price
-                    price_elem = card.find('div', {'class': '_4j0j'})
-                    price_text = price_elem.text if price_elem else "0"
-                    price = ''.join(filter(str.isdigit, price_text))
-                    price = int(price) if price else 0
-                    
-                    # Extract link
-                    link_elem = card.find('a')
-                    link = f"https://www.facebook.com{link_elem['href']}" if link_elem else "#"
-                    
+                    title = card.find_element(By.CSS_SELECTOR, "span[style*='line-clamp']").text
+                except:
+                    try:
+                        title = card.find_element(By.CSS_SELECTOR, "span[dir='auto']").text
+                    except:
+                        continue
+                
+                try:
+                    price = card.find_element(By.CSS_SELECTOR, "span[style*='color']").text
+                except:
+                    try:
+                        price = card.find_element(By.CSS_SELECTOR, "span:not([style])").text
+                    except:
+                        continue
+                
+                # Clean price
+                price_clean = ''.join(filter(str.isdigit, price))
+                price_clean = int(price_clean) if price_clean else 0
+                
+                # Get link
+                try:
+                    link = card.find_element(By.CSS_SELECTOR, "a").get_attribute("href")
+                except:
+                    link = "#"
+                
+                if title and price:
                     items.append({
                         'title': title,
-                        'price': price,
+                        'price': price_clean,
                         'link': link,
                         'city': city,
                         'search_term': product
                     })
-                    
-                except Exception as e:
-                    st.write(f"Error processing item: {str(e)}")
-                    continue
-            
-            if items:
-                df = pd.DataFrame(items)
-                st.write("Scraped data preview:")
-                st.write(df.head())
-                return df, len(items)
-            else:
-                st.warning("No items found in the parsed content")
-                return pd.DataFrame(), 0
+                    st.write(f"Found item: {title} - {price}")
                 
+            except Exception as e:
+                st.write(f"Error processing item: {str(e)}")
+                continue
+        
+        driver.quit()
+        
+        if items:
+            df = pd.DataFrame(items)
+            st.write("Scraped data preview:")
+            st.write(df.head())
+            return df, len(items)
         else:
-            st.error(f"Failed to access page: Status code {response.status_code}")
-            st.write("Response content:", response.text[:500])  # Show first 500 chars of response
+            st.warning("No items found in the parsed content")
             return pd.DataFrame(), 0
             
     except Exception as e:
         st.error(f"Error during scraping: {str(e)}")
+        if 'driver' in locals():
+            driver.quit()
         return pd.DataFrame(), 0
 
 # Streamlit UI
