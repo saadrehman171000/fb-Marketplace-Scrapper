@@ -30,115 +30,143 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
     try:
         st.info("Starting marketplace search...")
         
-        # Use Facebook's public GraphQL API
-        base_url = "https://www.facebook.com/api/graphql/"
+        # Use Facebook's public search API
+        base_url = "https://www.facebook.com/marketplace/api/search/"
         
         # Headers to mimic a browser request
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept': 'application/json',
             'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://www.facebook.com/marketplace/',
+            'Origin': 'https://www.facebook.com',
+            'Connection': 'keep-alive',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
             'Cache-Control': 'no-cache',
             'Pragma': 'no-cache',
-            'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-            'Sec-Ch-Ua-Mobile': '?0',
-            'Sec-Ch-Ua-Platform': '"Windows"',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Upgrade-Insecure-Requests': '1',
-            'X-Fb-Friendly-Name': 'MarketplaceFeedPaginationQuery',
         }
         
         # Query parameters
         params = {
-            'doc_id': '6474263079339547',  # Facebook's Marketplace feed doc_id
-            'variables': json.dumps({
-                "UFI2CommentsProvider_commentsKey": "MarketplaceFeed",
-                "count": 24,
-                "cursor": None,
-                "feedType": "MARKET_SEARCH",
-                "params": {
-                    "bqf": {
-                        "callsite": "COMMERCE_MKTPLACE_WWW",
-                        "query": product
-                    },
-                    "browse_request_params": {
-                        "commerce_enable_local_pickup": True,
-                        "commerce_search_and_rp_available": True,
-                        "commerce_search_and_rp_category_id": [],
-                        "commerce_search_and_rp_condition": None,
-                        "commerce_search_and_rp_ctime_days": None,
-                        "filter_location_id": city_code_fb,
-                        "price_lower_bound": min_price,
-                        "price_upper_bound": max_price
-                    }
-                }
+            'query': product,
+            'location_id': city_code_fb,
+            'min_price': str(min_price),
+            'max_price': str(max_price),
+            'exact': 'true' if exact else 'false',
+            'latitude': None,
+            'longitude': None,
+            'radius': '60',
+            'categoryID': 'all',
+            'sortBy': 'best_match',
+            'filters': json.dumps({
+                'price': {'min': min_price, 'max': max_price},
+                'location': city_code_fb,
+                'delivery_method': 'local_pick_up'
             })
         }
         
         st.info("Sending API request...")
+        st.info(f"URL: {base_url}")
+        st.info(f"Parameters: {params}")
+        
         response = requests.get(base_url, headers=headers, params=params)
         
         st.info(f"Response status: {response.status_code}")
+        st.info(f"Response headers: {dict(response.headers)}")
         
-        if response.status_code == 200:
-            try:
-                data = response.json()
-                st.info("Successfully parsed JSON response")
-                
-                # Extract items from the response
-                extracted_data = []
-                edges = data.get('data', {}).get('marketplace_search', {}).get('feed_units', {}).get('edges', [])
-                
-                for edge in edges:
-                    try:
-                        node = edge.get('node', {})
-                        listing = node.get('listing', {})
-                        
-                        if listing:
-                            title = listing.get('marketplace_listing_title', '')
-                            price = listing.get('listing_price', {}).get('amount', 0)
-                            url = f"https://www.facebook.com/marketplace/item/{listing.get('id', '')}"
-                            
-                            extracted_data.append({
-                                'title': title,
-                                'price': price,
-                                'price_text': f"${price}",
-                                'location': city,
-                                'url': url
-                            })
-                            st.info(f"Found item: {title} - ${price}")
-                    
-                    except Exception as e:
-                        st.warning(f"Error processing listing: {str(e)}")
-                        continue
-                
-                st.info(f"Successfully extracted {len(extracted_data)} items")
-                
-                # Create DataFrame
-                items_df = pd.DataFrame(extracted_data)
-                if not items_df.empty:
-                    items_df = items_df[['title', 'price', 'price_text', 'location', 'url']]
-                
-                return items_df, len(extracted_data)
+        # Try parsing the response
+        try:
+            content_type = response.headers.get('content-type', '')
+            st.info(f"Content type: {content_type}")
             
-            except Exception as e:
-                st.error(f"Error parsing response: {str(e)}")
-                st.info("Response content:")
-                st.code(response.text[:500])
-                return pd.DataFrame(), 0
-        else:
-            st.error(f"API request failed with status {response.status_code}")
-            st.info("Response headers:")
-            st.write(dict(response.headers))
+            if 'json' in content_type:
+                data = response.json()
+            else:
+                # If not JSON, try parsing the HTML
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Look for JSON data in script tags
+                scripts = soup.find_all('script')
+                for script in scripts:
+                    if 'marketplace' in script.text.lower():
+                        st.info("Found marketplace data in script tag")
+                        # Try to extract JSON from the script
+                        match = re.search(r'{\s*"marketplace":\s*{.*?}}(?=\s*[,;])', script.text)
+                        if match:
+                            data = json.loads(match.group(0))
+                            break
+                else:
+                    st.warning("No marketplace data found in scripts")
+                    data = {}
+            
+            # Extract items from the response
+            extracted_data = []
+            
+            # Try different paths to find the items
+            items = (
+                data.get('data', {}).get('marketplace_search', {}).get('feed_units', []) or
+                data.get('marketplace', {}).get('search_results', []) or
+                data.get('results', []) or
+                []
+            )
+            
+            for item in items:
+                try:
+                    # Try different paths to extract item data
+                    title = (
+                        item.get('marketplace_listing_title') or
+                        item.get('title') or
+                        item.get('name', '')
+                    )
+                    
+                    price = (
+                        item.get('listing_price', {}).get('amount') or
+                        item.get('price', {}).get('amount') or
+                        item.get('formatted_price', '0')
+                    )
+                    
+                    if isinstance(price, str):
+                        price = ''.join(filter(str.isdigit, price))
+                        price = int(price) if price else 0
+                    
+                    url = (
+                        f"https://www.facebook.com/marketplace/item/{item.get('id')}" if item.get('id') else
+                        item.get('url', '#')
+                    )
+                    
+                    if title and price > 0:
+                        extracted_data.append({
+                            'title': title,
+                            'price': price,
+                            'price_text': f"${price}",
+                            'location': city,
+                            'url': url
+                        })
+                        st.info(f"Found item: {title} - ${price}")
+                
+                except Exception as e:
+                    st.warning(f"Error processing item: {str(e)}")
+                    continue
+            
+            st.info(f"Successfully extracted {len(extracted_data)} items")
+            
+            # Create DataFrame
+            items_df = pd.DataFrame(extracted_data)
+            if not items_df.empty:
+                items_df = items_df[['title', 'price', 'price_text', 'location', 'url']]
+            
+            return items_df, len(extracted_data)
+        
+        except Exception as e:
+            st.error(f"Error processing response: {str(e)}")
             st.info("Response content:")
             st.code(response.text[:500])
             return pd.DataFrame(), 0
             
     except Exception as e:
-        st.error(f"Error during API request: {str(e)}")
+        st.error(f"Error during request: {str(e)}")
         return pd.DataFrame(), 0
 
 # Streamlit UI
