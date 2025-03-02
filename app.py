@@ -31,12 +31,10 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("--start-maximized")
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    chrome_options.add_argument("--headless")
     
-    # Add these for running in Docker
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--disable-setuid-sandbox")
-    chrome_options.binary_location = "/usr/bin/chromium"  # Path to Chromium in container
+    # For cloud deployment
+    chrome_options.binary_location = "/usr/bin/chromium-browser"
     
     try:
         browser = uc.Chrome(options=chrome_options)
