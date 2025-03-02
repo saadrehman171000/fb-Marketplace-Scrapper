@@ -4,78 +4,94 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import json
 import time
+import io
+import zipfile
 
 def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact):
     headers = {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_8_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
-        'Accept': '*/*',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'X-FB-Friendly-Name': 'marketplace_search',
-        'X-FB-LSD': '1',
-        'X-ASBD-ID': '129477',
-        'Origin': 'https://m.facebook.com',
-        'Referer': 'https://m.facebook.com/marketplace/',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Dest': 'document',
+        'Upgrade-Insecure-Requests': '1',
+        'Connection': 'keep-alive',
     }
 
     try:
-        # Facebook's mobile API endpoint
-        url = "https://m.facebook.com/api/graphql/"
-
-        # Updated query variables for mobile API
-        variables = {
-            "params": {
-                "marketplace_search": {
-                    "query": product,
-                    "location_id": city_code_fb,
-                    "price_min": min_price,
-                    "price_max": max_price
-                }
-            },
-            "scale": 2
-        }
-
-        data = {
-            "fb_api_caller_class": "RelayModern",
-            "fb_api_req_friendly_name": "MarketplaceSearchQuery",
-            "variables": json.dumps(variables),
-            "doc_id": "5026154290794576"  # Mobile API query ID
-        }
-
-        st.info("Sending request to Facebook Mobile API...")
-        response = requests.post(url, headers=headers, data=data)
+        # First get a session cookie
+        session = requests.Session()
         
-        if response.status_code == 200:
-            try:
-                json_data = response.json()
-                st.info("Processing response data...")
-                
-                items = []
-                if 'data' in json_data and 'marketplace_search' in json_data['data']:
-                    listings = json_data['data']['marketplace_search']['feed_units']
-                    for listing in listings:
-                        try:
-                            story = listing.get('story')
-                            if story:
-                                items.append({
-                                    'title': story.get('marketplace_listing_title', ''),
-                                    'price': story.get('formatted_price', {}).get('price', 0),
-                                    'price_text': story.get('formatted_price', {}).get('text', '$0'),
-                                    'location': city,
-                                    'url': f"https://www.facebook.com/marketplace/item/{story.get('id', '')}"
-                                })
-                        except Exception as e:
-                            continue
+        # Try different search endpoints
+        search_urls = [
+            f"https://www.facebook.com/marketplace/search?query={product}&exact=false&minPrice={min_price}&maxPrice={max_price}&latitude=34.0522&longitude=-118.2437",
+            f"https://www.facebook.com/marketplace/{city_code_fb}/search?query={product}&exact=false&minPrice={min_price}&maxPrice={max_price}",
+            f"https://www.facebook.com/marketplace/category/search?query={product}&exact=false&minPrice={min_price}&maxPrice={max_price}&region_id={city_code_fb}"
+        ]
 
-                st.info(f"Found {len(items)} items")
-                return pd.DataFrame(items), len(items)
+        items = []
+        for url in search_urls:
+            try:
+                st.info(f"Trying URL: {url}")
+                
+                # Get initial page to get cookies
+                initial_response = session.get("https://www.facebook.com/marketplace/", headers=headers)
+                if initial_response.status_code == 200:
+                    st.info("Got initial session...")
+                
+                # Now try the search
+                response = session.get(url, headers=headers)
+                
+                if response.status_code == 200:
+                    st.info("Got search response, looking for data...")
+                    
+                    # Look for marketplace data in the HTML
+                    content = response.text
+                    
+                    # Try to find the JSON data embedded in the page
+                    data_start = content.find('"marketplace_search":{')
+                    if data_start != -1:
+                        data_end = content.find('</script>', data_start)
+                        json_str = content[data_start:data_end]
+                        
+                        # Extract listing data
+                        listing_start = json_str.find('"listing":{')
+                        while listing_start != -1:
+                            try:
+                                listing_end = json_str.find('}', listing_start)
+                                listing_data = json_str[listing_start:listing_end+1]
+                                
+                                # Parse individual listing
+                                title_start = listing_data.find('"title":"') + 9
+                                title_end = listing_data.find('",', title_start)
+                                title = listing_data[title_start:title_end]
+                                
+                                price_start = listing_data.find('"price":{"amount":') + 16
+                                price_end = listing_data.find('}', price_start)
+                                price = listing_data[price_start:price_end]
+                                
+                                items.append({
+                                    'title': title,
+                                    'price': float(price) if price.isdigit() else 0,
+                                    'price_text': f"${price}",
+                                    'location': city,
+                                    'url': url
+                                })
+                                
+                                listing_start = json_str.find('"listing":{', listing_end)
+                            except:
+                                break
+                    
+                    if items:
+                        break
+                        
             except Exception as e:
-                st.error(f"Error processing response: {str(e)}")
-                st.error(f"Response content: {response.text[:200]}...")  # Show first 200 chars of response
-                return pd.DataFrame(), 0
-        else:
-            st.error(f"API request failed with status code: {response.status_code}")
-            st.error(f"Response content: {response.text[:200]}...")  # Show first 200 chars of response
-            return pd.DataFrame(), 0
+                st.warning(f"Failed with URL {url}: {str(e)}")
+                continue
+
+        st.info(f"Found {len(items)} items")
+        return pd.DataFrame(items), len(items)
 
     except Exception as e:
         st.error(f"Error during scraping: {str(e)}")
