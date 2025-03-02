@@ -30,139 +30,118 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
     try:
         st.info("Starting marketplace search...")
         
-        # Use Facebook's public search API
-        base_url = "https://www.facebook.com/marketplace/api/search/"
+        # Use Facebook's mobile API
+        base_url = f"https://m.facebook.com/marketplace/search/results/"
         
-        # Headers to mimic a browser request
+        # Headers to mimic a mobile browser
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_8_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.facebook.com/marketplace/',
-            'Origin': 'https://www.facebook.com',
+            'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-origin',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-User': '?1',
+            'Sec-Fetch-Dest': 'document',
+            'Cache-Control': 'max-age=0'
         }
         
         # Query parameters
         params = {
             'query': product,
-            'location_id': city_code_fb,
-            'min_price': str(min_price),
-            'max_price': str(max_price),
-            'exact': 'true' if exact else 'false',
-            'latitude': None,
-            'longitude': None,
-            'radius': '60',
-            'categoryID': 'all',
+            'daysSinceListed': 'all',
             'sortBy': 'best_match',
-            'filters': json.dumps({
-                'price': {'min': min_price, 'max': max_price},
-                'location': city_code_fb,
-                'delivery_method': 'local_pick_up'
-            })
+            'exact': str(exact).lower(),
+            'minPrice': str(min_price),
+            'maxPrice': str(max_price),
+            'location': city_code_fb,
+            'radius': '60'
         }
         
-        st.info("Sending API request...")
+        st.info("Sending request...")
         st.info(f"URL: {base_url}")
         st.info(f"Parameters: {params}")
         
-        response = requests.get(base_url, headers=headers, params=params)
+        session = requests.Session()
+        response = session.get(base_url, headers=headers, params=params)
         
         st.info(f"Response status: {response.status_code}")
-        st.info(f"Response headers: {dict(response.headers)}")
         
-        # Try parsing the response
-        try:
-            content_type = response.headers.get('content-type', '')
-            st.info(f"Content type: {content_type}")
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            if 'json' in content_type:
-                data = response.json()
-            else:
-                # If not JSON, try parsing the HTML
-                soup = BeautifulSoup(response.text, 'html.parser')
+            # Look for marketplace items
+            items = []
+            
+            # Try different selectors for marketplace items
+            selectors = [
+                'div[data-sigil="market-place-item"]',
+                'div[data-ft*="marketplace"]',
+                'a[href*="/marketplace/item/"]',
+                'div._7g1d',  # Common Facebook marketplace item class
+                'div[style*="border-radius: 8px"]'  # Item cards
+            ]
+            
+            for selector in selectors:
+                elements = soup.select(selector)
+                st.info(f"Found {len(elements)} elements with selector: {selector}")
                 
-                # Look for JSON data in script tags
-                scripts = soup.find_all('script')
-                for script in scripts:
-                    if 'marketplace' in script.text.lower():
-                        st.info("Found marketplace data in script tag")
-                        # Try to extract JSON from the script
-                        match = re.search(r'{\s*"marketplace":\s*{.*?}}(?=\s*[,;])', script.text)
-                        if match:
-                            data = json.loads(match.group(0))
-                            break
-                else:
-                    st.warning("No marketplace data found in scripts")
-                    data = {}
-            
-            # Extract items from the response
-            extracted_data = []
-            
-            # Try different paths to find the items
-            items = (
-                data.get('data', {}).get('marketplace_search', {}).get('feed_units', []) or
-                data.get('marketplace', {}).get('search_results', []) or
-                data.get('results', []) or
-                []
-            )
-            
-            for item in items:
-                try:
-                    # Try different paths to extract item data
-                    title = (
-                        item.get('marketplace_listing_title') or
-                        item.get('title') or
-                        item.get('name', '')
-                    )
+                if elements:
+                    for element in elements:
+                        try:
+                            # Try to find title
+                            title_elem = element.select_one('span._1qt3._a7o4,span._1qt3,div._1qt3')
+                            title = title_elem.text.strip() if title_elem else None
+                            
+                            # Try to find price
+                            price_elem = element.select_one('span._2zq0,span[data-sigil="price"]')
+                            if price_elem:
+                                price_text = price_elem.text.strip()
+                                price = int(''.join(filter(str.isdigit, price_text)))
+                            else:
+                                continue
+                            
+                            # Try to find link
+                            link = element.get('href')
+                            if link and not link.startswith('http'):
+                                link = f"https://www.facebook.com{link}"
+                            
+                            if title and price > 0:
+                                items.append({
+                                    'title': title,
+                                    'price': price,
+                                    'price_text': f"${price}",
+                                    'location': city,
+                                    'url': link or '#'
+                                })
+                                st.info(f"Found item: {title} - ${price}")
+                        
+                        except Exception as e:
+                            st.warning(f"Error processing element: {str(e)}")
+                            continue
                     
-                    price = (
-                        item.get('listing_price', {}).get('amount') or
-                        item.get('price', {}).get('amount') or
-                        item.get('formatted_price', '0')
-                    )
-                    
-                    if isinstance(price, str):
-                        price = ''.join(filter(str.isdigit, price))
-                        price = int(price) if price else 0
-                    
-                    url = (
-                        f"https://www.facebook.com/marketplace/item/{item.get('id')}" if item.get('id') else
-                        item.get('url', '#')
-                    )
-                    
-                    if title and price > 0:
-                        extracted_data.append({
-                            'title': title,
-                            'price': price,
-                            'price_text': f"${price}",
-                            'location': city,
-                            'url': url
-                        })
-                        st.info(f"Found item: {title} - ${price}")
-                
-                except Exception as e:
-                    st.warning(f"Error processing item: {str(e)}")
-                    continue
+                    if items:
+                        break
             
-            st.info(f"Successfully extracted {len(extracted_data)} items")
+            st.info(f"Successfully extracted {len(items)} items")
             
             # Create DataFrame
-            items_df = pd.DataFrame(extracted_data)
+            items_df = pd.DataFrame(items)
             if not items_df.empty:
                 items_df = items_df[['title', 'price', 'price_text', 'location', 'url']]
             
-            return items_df, len(extracted_data)
-        
-        except Exception as e:
-            st.error(f"Error processing response: {str(e)}")
-            st.info("Response content:")
+            # Show sample of HTML for debugging
+            st.info("Sample of response HTML:")
             st.code(response.text[:500])
+            
+            return items_df, len(items)
+        
+        else:
+            st.error(f"Request failed with status {response.status_code}")
+            st.info("Response headers:")
+            st.write(dict(response.headers))
             return pd.DataFrame(), 0
             
     except Exception as e:
