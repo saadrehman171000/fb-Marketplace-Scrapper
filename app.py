@@ -1,26 +1,10 @@
 ﻿import streamlit as st
-import requests
-from bs4 import BeautifulSoup
 import pandas as pd
-import json
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 import time
 import io
 import zipfile
-from urllib.parse import quote
-from dotenv import load_dotenv
-import os
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-
-load_dotenv()  # Load environment variables from .env file
-
-def init_session_state():
-    if 'driver' not in st.session_state:
-        st.session_state.driver = None
-        st.session_state.logged_in = False
 
 def setup_driver():
     chrome_options = Options()
@@ -31,71 +15,22 @@ def setup_driver():
     chrome_options.add_argument('--window-size=1920,1080')
     return webdriver.Chrome(options=chrome_options)
 
-def facebook_login(email, password):
+def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb):
     try:
-        if not st.session_state.driver:
-            st.session_state.driver = setup_driver()
-        
-        driver = st.session_state.driver
-        driver.get('https://www.facebook.com')
-        
-        # Wait for email field and enter email
-        email_field = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "email"))
-        )
-        email_field.send_keys(email)
-        
-        # Enter password
-        password_field = driver.find_element(By.ID, "pass")
-        password_field.send_keys(password)
-        
-        # Click login button
-        login_button = driver.find_element(By.NAME, "login")
-        login_button.click()
-        
-        # Wait for successful login
-        time.sleep(5)  # Wait for login to complete
-        
-        if "home" in driver.current_url.lower():
-            st.session_state.logged_in = True
-            st.success("Successfully logged in to Facebook!")
-            return True
-            
-        return False
-        
-    except Exception as e:
-        st.error(f"Login error: {str(e)}")
-        return False
-
-def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact):
-    if not st.session_state.logged_in:
-        if not auto_login():
-            st.error("No active Facebook session. Please log in first.")
-            return pd.DataFrame(), 0
-    
-    try:
-        driver = st.session_state.driver
+        driver = setup_driver()
         marketplace_url = f"https://www.facebook.com/marketplace/{city_code_fb}/search?query={product}&minPrice={min_price}&maxPrice={max_price}"
         driver.get(marketplace_url)
-        
-        # Add your scraping logic here using Selenium
-        # This is a placeholder - you'll need to implement the actual scraping
         time.sleep(5)  # Wait for page to load
         
-        # Return empty DataFrame for now
-        return pd.DataFrame(), 0
+        # Add your scraping logic here
+        # This is where you'll implement the actual data collection
+        
+        driver.quit()
+        return pd.DataFrame(), 0  # Placeholder return
         
     except Exception as e:
         st.error(f"Error during scraping: {str(e)}")
         return pd.DataFrame(), 0
-
-def auto_login():
-    email = os.getenv('FACEBOOK_EMAIL')
-    password = os.getenv('FACEBOOK_PASSWORD')
-    
-    if email and password and not st.session_state.logged_in:
-        return facebook_login(email, password)
-    return False
 
 # Streamlit UI
 st.set_page_config(page_title="Facebook Marketplace Scraper", layout="wide")
@@ -109,35 +44,6 @@ if "marketplaces" not in st.session_state:
 
 if "scraped_data" not in st.session_state:
     st.session_state["scraped_data"] = None
-
-# Initialize session state
-init_session_state()
-
-# Try auto-login before rendering anything
-auto_login()
-
-# Only show login form if auto-login failed
-with st.sidebar:
-    st.header("Facebook Login")
-    
-    if not st.session_state.logged_in:
-        with st.form("login_form"):
-            email = st.text_input("Email", value=os.getenv('FACEBOOK_EMAIL', ''), type="default")
-            password = st.text_input("Password", value=os.getenv('FACEBOOK_PASSWORD', ''), type="password")
-            login_button = st.form_submit_button("Login")
-            
-            if login_button and email and password:
-                session = facebook_login(email, password)
-                if session:
-                    st.session_state.fb_session = session
-                    st.session_state.logged_in = True
-                    st.rerun()
-    else:
-        st.success("Logged in successfully!")
-        if st.button("Logout"):
-            st.session_state.fb_session = None
-            st.session_state.logged_in = False
-            st.rerun()
 
 # Input fields with better layout and styling
 with st.form(key='input_form'):
@@ -188,50 +94,44 @@ if st.session_state["marketplaces"]:
 
 # Handle scraping data
 if submit_button:
-    if 'fb_session' not in st.session_state:
-        st.error("Please log in to Facebook first")
+    individual_files = []
+    if not st.session_state["marketplaces"]:
+        st.error("Please add at least one marketplace to scrape data.")
     else:
-        # Use the authenticated session for scraping
-        individual_files = []
-        if not st.session_state["marketplaces"]:
-            st.error("Please add at least one marketplace to scrape data.")
-        else:
-            for marketplace in st.session_state["marketplaces"]:
-                with st.spinner(f"Scraping data for {marketplace['city']}..."):
-                    items_df, total_links = scrape_facebook_marketplace(
-                        marketplace["city"],
-                        marketplace["product"],
-                        marketplace["min_price"],
-                        marketplace["max_price"],
-                        marketplace["city_code_fb"],
-                        exact=True
-                    )
+        for marketplace in st.session_state["marketplaces"]:
+            with st.spinner(f"Scraping data for {marketplace['city']}..."):
+                items_df, total_links = scrape_facebook_marketplace(
+                    marketplace["city"],
+                    marketplace["product"],
+                    marketplace["min_price"],
+                    marketplace["max_price"],
+                    marketplace["city_code_fb"]
+                )
 
-            if not items_df.empty:
-                if "scraped_data" not in st.session_state:
-                    st.session_state["scraped_data"] = pd.DataFrame()
+                if not items_df.empty:
+                    if "scraped_data" not in st.session_state:
+                        st.session_state["scraped_data"] = pd.DataFrame()
 
-                st.session_state["scraped_data"] = pd.concat([st.session_state["scraped_data"], items_df], ignore_index=True)
+                    st.session_state["scraped_data"] = pd.concat([st.session_state["scraped_data"], items_df], ignore_index=True)
 
-                # Save individual result for each marketplace
-                individual_file = io.StringIO()
-                items_df.to_csv(individual_file, index=False)
-                individual_file.seek(0)
-                individual_files.append({
-                    'name': f"{marketplace['city']}_{marketplace['product']}_result.csv",
-                    'file': individual_file
-                })
+                    # Save individual result
+                    individual_file = io.StringIO()
+                    items_df.to_csv(individual_file, index=False)
+                    individual_file.seek(0)
+                    individual_files.append({
+                        'name': f"{marketplace['city']}_{marketplace['product']}_result.csv",
+                        'file': individual_file
+                    })
 
         if st.session_state["scraped_data"] is not None and not st.session_state["scraped_data"].empty:
             st.write("### Combined Match Results:")
             st.dataframe(st.session_state["scraped_data"])
 
-            # Save combined CSV file
+            # Create download files
             combined_file = io.StringIO()
             st.session_state["scraped_data"].to_csv(combined_file, index=False)
             combined_file.seek(0)
 
-            # Zip all individual and combined files into one package
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                 for file_data in individual_files:
@@ -240,7 +140,6 @@ if submit_button:
 
             zip_buffer.seek(0)
 
-            # Add download button
             st.download_button(
                 label="Download All Results",
                 data=zip_buffer,
