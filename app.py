@@ -35,77 +35,73 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
         chrome_options.binary_location = "/usr/bin/chromium"
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
-        # Get Chromium version
         chromium_version = get_chromium_version()
         st.write(f"Detected Chromium version: {chromium_version}")
         
-        # Use default ChromeDriver installation
         service = Service('/usr/bin/chromedriver')
-        driver = webdriver.Chrome(
-            service=service,
-            options=chrome_options
-        )
+        driver = webdriver.Chrome(service=service, options=chrome_options)
         
-        url = f"https://www.facebook.com/marketplace/search?query={product}&exact=false"
+        # Use mobile URL which often has simpler structure
+        url = f"https://m.facebook.com/marketplace/{city_code_fb}/search/?query={product}&minPrice={min_price}&maxPrice={max_price}"
         st.write(f"Accessing URL: {url}")
         
         driver.get(url)
         st.write("Waiting for page to load...")
-        time.sleep(10)
+        time.sleep(15)  # Increased wait time
+        
+        # Get page source for debugging
+        page_source = driver.page_source
+        st.write(f"Page source length: {len(page_source)}")
         
         items = []
         
-        # Scroll a few times to load more content
-        for i in range(3):
+        # Scroll more times with longer pauses
+        for i in range(5):
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
+            time.sleep(3)
             st.write(f"Scroll {i+1} completed")
         
-        # Look for marketplace items using multiple selectors
+        # Updated selectors based on Facebook's mobile structure
         selectors = [
-            "div[style*='border-radius: max']",  # Common marketplace item container
-            "a[href*='/marketplace/item/']",     # Item links
-            "div[style*='width: 100%'][role='button']"  # Item containers
+            "div[class*='x1gslohp']",  # Recent Facebook class for item containers
+            "div[class*='x1n2onr6']",   # Another common marketplace item class
+            "a[href*='/item/']",        # Direct item links
+            "div[role='main'] a",       # Main content links
+            "div[data-pagelet='MainFeed']", # Main feed container
         ]
         
         for selector in selectors:
             st.write(f"Trying selector: {selector}")
             elements = driver.find_elements(By.CSS_SELECTOR, selector)
+            
             if elements:
                 st.write(f"Found {len(elements)} items with selector {selector}")
+                st.write("Sample HTML:", elements[0].get_attribute('outerHTML') if elements else "No elements")
                 
                 for element in elements:
                     try:
-                        # Get the entire HTML of the element for debugging
-                        html = element.get_attribute('outerHTML')
-                        st.write(f"Processing element: {html[:200]}...")  # First 200 chars
+                        # Try to get any visible text
+                        all_text = element.text
+                        st.write(f"Element text: {all_text}")
                         
-                        # Try to extract title
-                        try:
-                            title = element.find_element(By.CSS_SELECTOR, "span[style*='line-clamp']").text
-                        except:
-                            title = element.find_element(By.CSS_SELECTOR, "span").text
+                        # Try different ways to get title and price
+                        spans = element.find_elements(By.TAG_NAME, "span")
+                        for span in spans:
+                            text = span.text
+                            st.write(f"Found span text: {text}")
                         
-                        # Try to extract price
-                        try:
-                            price_elem = element.find_element(By.CSS_SELECTOR, "span[style*='color: rgb(5, 5, 5)']")
-                            price = price_elem.text
-                        except:
-                            price = "0"
+                        # If we found text that looks like a price
+                        price_matches = [s for s in spans if '$' in s.text or any(c.isdigit() for c in s.text)]
+                        title_candidates = [s for s in spans if len(s.text) > 10 and '$' not in s.text]
                         
-                        # Clean price
-                        price_clean = ''.join(filter(str.isdigit, price))
-                        price_clean = int(price_clean) if price_clean else 0
-                        
-                        # Get link
-                        try:
-                            link = element.get_attribute("href")
-                            if not link:
-                                link = element.find_element(By.CSS_SELECTOR, "a").get_attribute("href")
-                        except:
-                            link = "#"
-                        
-                        if title and price_clean > 0:
+                        if price_matches and title_candidates:
+                            title = title_candidates[0].text
+                            price = price_matches[0].text
+                            price_clean = ''.join(filter(str.isdigit, price))
+                            price_clean = int(price_clean) if price_clean else 0
+                            
+                            link = element.get_attribute("href") or "#"
+                            
                             items.append({
                                 'title': title,
                                 'price': price_clean,
@@ -120,7 +116,7 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
                         continue
                 
                 if items:
-                    break  # If we found items with this selector, stop trying others
+                    break
         
         driver.quit()
         st.write("Browser closed")
