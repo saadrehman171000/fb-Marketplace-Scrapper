@@ -1,7 +1,6 @@
 # For Option 1 (GraphQL)
 streamlit
 requests
-beautifulsoup4
 pandas
 
 # For Option 2 (requests-html)

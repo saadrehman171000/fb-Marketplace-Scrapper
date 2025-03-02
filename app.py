@@ -8,65 +8,73 @@ import time
 def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
+        'Accept': 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Content-Type': 'application/json',
+        'Origin': 'https://www.facebook.com',
+        'Referer': 'https://www.facebook.com/marketplace/',
     }
 
     try:
-        # Try different URL formats
-        urls = [
-            f"https://www.facebook.com/marketplace/search/?query={product}&minPrice={min_price}&maxPrice={max_price}",
-            f"https://www.facebook.com/marketplace/{city_code_fb}/search/?query={product}&minPrice={min_price}&maxPrice={max_price}",
-            f"https://www.facebook.com/marketplace/category/search/?query={product}&minPrice={min_price}&maxPrice={max_price}"
-        ]
+        # Facebook's GraphQL API endpoint
+        url = "https://www.facebook.com/api/graphql/"
+        
+        # GraphQL query variables
+        variables = {
+            "count": 24,
+            "cursor": None,
+            "params": {
+                "bqf": {
+                    "callsite": "COMMERCE_MKTPLACE_WWW",
+                    "query": product,
+                    "regionid": city_code_fb,
+                    "rid": city_code_fb,
+                    "filters": [
+                        {"price_lower_bound": min_price},
+                        {"price_upper_bound": max_price}
+                    ]
+                }
+            }
+        }
+        
+        # GraphQL query ID for marketplace search
+        query_id = "7711610262190251"  # This is Facebook's marketplace search query ID
+        
+        data = {
+            "doc_id": query_id,
+            "variables": json.dumps(variables),
+            "fb_api_req_friendly_name": "MarketplaceFeedPaginationQuery"
+        }
 
-        items = []
-        for url in urls:
+        st.info("Sending request to Facebook API...")
+        response = requests.post(url, headers=headers, data=data)
+        
+        if response.status_code == 200:
             try:
-                st.info(f"Trying URL: {url}")
-                response = requests.get(url, headers=headers)
-                soup = BeautifulSoup(response.text, 'html.parser')
+                json_data = response.json()
+                st.info("Processing response data...")
                 
-                # Find marketplace listings
-                listings = soup.find_all('div', {'role': 'main'})
-                if listings:
+                items = []
+                if 'data' in json_data and 'marketplace_search' in json_data['data']:
+                    listings = json_data['data']['marketplace_search']['edges']
                     for listing in listings:
-                        try:
-                            # Extract title
-                            title_elem = listing.find('span', {'class': 'x1lliihq'})
-                            title = title_elem.text if title_elem else None
-                            
-                            # Extract price
-                            price_elem = listing.find('span', {'class': 'x193iq5w'})
-                            price_text = price_elem.text if price_elem else None
-                            price = float(price_text.replace('$', '').replace(',', '')) if price_text else None
-                            
-                            # Extract URL
-                            link = listing.find('a', {'role': 'link'})
-                            url = link.get('href') if link else None
-                            
-                            if title and url:
-                                items.append({
-                                    'title': title,
-                                    'price': price,
-                                    'price_text': price_text,
-                                    'location': city,
-                                    'url': f"https://www.facebook.com{url}" if url.startswith('/') else url
-                                })
-                        except Exception as e:
-                            continue
-                    
-                    if items:
-                        break  # Stop if we found items
-                        
+                        node = listing['node']
+                        items.append({
+                            'title': node.get('marketplace_listing_title', ''),
+                            'price': node.get('listing_price', {}).get('amount', 0),
+                            'price_text': f"${node.get('listing_price', {}).get('amount', 0)}",
+                            'location': city,
+                            'url': f"https://www.facebook.com/marketplace/item/{node.get('id', '')}"
+                        })
+                
+                st.info(f"Found {len(items)} items")
+                return pd.DataFrame(items), len(items)
             except Exception as e:
-                st.warning(f"Failed with URL {url}: {str(e)}")
-                continue
-
-        df = pd.DataFrame(items)
-        return df, len(items)
+                st.error(f"Error processing response: {str(e)}")
+                return pd.DataFrame(), 0
+        else:
+            st.error(f"API request failed with status code: {response.status_code}")
+            return pd.DataFrame(), 0
 
     except Exception as e:
         st.error(f"Error during scraping: {str(e)}")
