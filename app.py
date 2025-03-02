@@ -106,7 +106,19 @@ if 'fb_session' not in st.session_state:
     st.session_state.fb_session = None
     st.session_state.logged_in = False
 
-# Modify the login section
+# Auto-login using environment variables
+if not st.session_state.logged_in:
+    email = os.getenv('FACEBOOK_EMAIL')
+    password = os.getenv('FACEBOOK_PASSWORD')
+    
+    if email and password:
+        session = facebook_login(email, password)
+        if session:
+            st.session_state.fb_session = session
+            st.session_state.logged_in = True
+            st.rerun()
+
+# Only show login form if auto-login failed
 with st.sidebar:
     st.header("Facebook Login")
     
@@ -121,9 +133,9 @@ with st.sidebar:
                 if session:
                     st.session_state.fb_session = session
                     st.session_state.logged_in = True
-                    st.rerun()  # Rerun the app to update the UI
+                    st.rerun()
     else:
-        st.success("Already logged in!")
+        st.success("Logged in successfully!")
         if st.button("Logout"):
             st.session_state.fb_session = None
             st.session_state.logged_in = False
