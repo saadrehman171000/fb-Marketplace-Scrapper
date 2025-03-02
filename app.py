@@ -7,6 +7,10 @@ import time
 import io
 import zipfile
 from urllib.parse import quote
+from dotenv import load_dotenv
+import os
+
+load_dotenv()  # Load environment variables from .env file
 
 def facebook_login(email, password):
     session = requests.Session()
@@ -101,8 +105,9 @@ if "scraped_data" not in st.session_state:
 with st.sidebar:
     st.header("Facebook Login")
     with st.form("login_form"):
-        email = st.text_input("Email", type="default")
-        password = st.text_input("Password", type="password")
+        # Use environment variables as default values
+        email = st.text_input("Email", value=os.getenv('FACEBOOK_EMAIL', ''), type="default")
+        password = st.text_input("Password", value=os.getenv('FACEBOOK_PASSWORD', ''), type="password")
         login_button = st.form_submit_button("Login")
         
         if login_button and email and password:
