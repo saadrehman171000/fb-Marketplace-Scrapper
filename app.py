@@ -18,44 +18,38 @@ def facebook_login(email, password):
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'none',
         'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1'
+        'Upgrade-Insecure-Requests': '1',
+        'Referer': 'https://m.facebook.com/',
+        'Origin': 'https://m.facebook.com'
     }
     
     try:
-        # Use mobile URL which sometimes has less strict blocking
-        init_response = session.get('https://m.facebook.com', headers=headers, timeout=30)
+        # Initial page load to get cookies
+        init_response = session.get('https://m.facebook.com/', headers=headers, timeout=30)
         
         if init_response.status_code == 200:
-            # Extract login form parameters
-            content = init_response.text
-            lsd_start = content.find('"lsd","value":"') + 14
-            lsd_end = content.find('"', lsd_start)
-            lsd = content[lsd_start:lsd_end] if lsd_start > 14 else ""
-            
-            jazoest_start = content.find('"jazoest","value":"') + 19
-            jazoest_end = content.find('"', jazoest_start)
-            jazoest = content[jazoest_start:jazoest_end] if jazoest_start > 19 else ""
-            
-            # Login data
+            # Login data with additional parameters
             login_data = {
-                'lsd': lsd,
-                'jazoest': jazoest,
                 'email': email,
                 'pass': password,
                 'login': '1',
-                'persistent': '1'
+                'next': '',
+                'login_source': 'comet_headerless',
+                'refsrc': 'deprecated',
+                'app_id': '256281040558',
+                'locale': 'en_US'
             }
             
             # Perform login
             login_response = session.post(
-                'https://www.facebook.com/login/device-based/regular/login/',
+                'https://m.facebook.com/login/device-based/regular/login/',
                 data=login_data,
                 headers=headers,
                 allow_redirects=True
             )
             
             # Check if login was successful
-            if 'c_user' in session.cookies:
+            if 'c_user' in session.cookies or 'xs' in session.cookies:
                 st.success("Successfully logged in to Facebook!")
                 return session
             else:
