@@ -25,101 +25,70 @@ def get_chromium_version():
 
 def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb):
     try:
-        st.write("Starting scraper...")
+        st.write("Starting marketplace search...")
         
-        chrome_options = Options()
-        chrome_options.add_argument('--headless')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.binary_location = "/usr/bin/chromium"
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        # Construct the public API URL
+        base_url = "https://www.facebook.com/api/graphql/"
         
-        chromium_version = get_chromium_version()
-        st.write(f"Detected Chromium version: {chromium_version}")
+        # Headers to mimic a browser request
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': 'https://www.facebook.com',
+            'Referer': 'https://www.facebook.com/marketplace/',
+        }
         
-        service = Service('/usr/bin/chromedriver')
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        # Query parameters
+        params = {
+            'doc_id': '7711610262206673',  # Facebook's Marketplace search doc_id
+            'variables': json.dumps({
+                "count": 24,
+                "cursor": None,
+                "query": product,
+                "filter_location_id": city_code_fb,
+                "location_id": city_code_fb,
+                "price_lower_bound": min_price,
+                "price_upper_bound": max_price
+            })
+        }
         
-        # Use mobile URL which often has simpler structure
-        url = f"https://m.facebook.com/marketplace/{city_code_fb}/search/?query={product}&minPrice={min_price}&maxPrice={max_price}"
-        st.write(f"Accessing URL: {url}")
+        st.write("Sending API request...")
+        response = requests.get(base_url, headers=headers, params=params)
         
-        driver.get(url)
-        st.write("Waiting for page to load...")
-        time.sleep(15)  # Increased wait time
-        
-        # Get page source for debugging
-        page_source = driver.page_source
-        st.write(f"Page source length: {len(page_source)}")
-        
-        items = []
-        
-        # Scroll more times with longer pauses
-        for i in range(5):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(3)
-            st.write(f"Scroll {i+1} completed")
-        
-        # Updated selectors based on Facebook's mobile structure
-        selectors = [
-            "div[class*='x1gslohp']",  # Recent Facebook class for item containers
-            "div[class*='x1n2onr6']",   # Another common marketplace item class
-            "a[href*='/item/']",        # Direct item links
-            "div[role='main'] a",       # Main content links
-            "div[data-pagelet='MainFeed']", # Main feed container
-        ]
-        
-        for selector in selectors:
-            st.write(f"Trying selector: {selector}")
-            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+        if response.status_code == 200:
+            st.write("Response received successfully")
+            data = response.json()
             
-            if elements:
-                st.write(f"Found {len(elements)} items with selector {selector}")
-                st.write("Sample HTML:", elements[0].get_attribute('outerHTML') if elements else "No elements")
+            # Process the response
+            items = []
+            try:
+                listings = data.get('data', {}).get('marketplace_search', {}).get('feed_units', {}).get('edges', [])
                 
-                for element in elements:
-                    try:
-                        # Try to get any visible text
-                        all_text = element.text
-                        st.write(f"Element text: {all_text}")
+                for listing in listings:
+                    node = listing.get('node', {}).get('listing', {})
+                    if node:
+                        title = node.get('marketplace_listing_title', '')
+                        price = node.get('listing_price', {}).get('amount', 0)
+                        item_id = node.get('id', '')
                         
-                        # Try different ways to get title and price
-                        spans = element.find_elements(By.TAG_NAME, "span")
-                        for span in spans:
-                            text = span.text
-                            st.write(f"Found span text: {text}")
-                        
-                        # If we found text that looks like a price
-                        price_matches = [s for s in spans if '$' in s.text or any(c.isdigit() for c in s.text)]
-                        title_candidates = [s for s in spans if len(s.text) > 10 and '$' not in s.text]
-                        
-                        if price_matches and title_candidates:
-                            title = title_candidates[0].text
-                            price = price_matches[0].text
-                            price_clean = ''.join(filter(str.isdigit, price))
-                            price_clean = int(price_clean) if price_clean else 0
-                            
-                            link = element.get_attribute("href") or "#"
-                            
-                            items.append({
-                                'title': title,
-                                'price': price_clean,
-                                'link': link,
-                                'city': city,
-                                'search_term': product
-                            })
-                            st.write(f"Added item: {title} - ${price_clean}")
-                    
-                    except Exception as e:
-                        st.write(f"Error processing element: {str(e)}")
-                        continue
-                
-                if items:
-                    break
+                        items.append({
+                            'title': title,
+                            'price': price,
+                            'link': f"https://www.facebook.com/marketplace/item/{item_id}",
+                            'city': city,
+                            'search_term': product
+                        })
+                        st.write(f"Found item: {title} - ${price}")
+            
+            except Exception as e:
+                st.write(f"Error processing response: {str(e)}")
+                st.write("Response structure:", data)
         
-        driver.quit()
-        st.write("Browser closed")
+        else:
+            st.error(f"API request failed with status code: {response.status_code}")
+            st.write("Response content:", response.text[:500])
         
         if items:
             df = pd.DataFrame(items)
@@ -131,9 +100,7 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
             return pd.DataFrame(), 0
             
     except Exception as e:
-        st.error(f"Error during scraping: {str(e)}")
-        if 'driver' in locals():
-            driver.quit()
+        st.error(f"Error during API request: {str(e)}")
         return pd.DataFrame(), 0
 
 # Streamlit UI
