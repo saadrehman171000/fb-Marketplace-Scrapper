@@ -11,6 +11,8 @@ from selenium.webdriver.support import expected_conditions as EC
 import json
 import requests
 from bs4 import BeautifulSoup
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
 def setup_driver():
     chrome_options = Options()
@@ -25,50 +27,101 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
     try:
         st.write("Starting scraper...")
         
-        # Setup Chrome options with minimal configuration
         chrome_options = Options()
         chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
 
-        driver = webdriver.Chrome(options=chrome_options)
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
         
-        # Use a simpler URL format
         url = f"https://www.facebook.com/marketplace/search?query={product}&exact=false"
         st.write(f"Accessing URL: {url}")
         
         driver.get(url)
         st.write("Waiting for page to load...")
-        time.sleep(10)  # Longer initial wait
+        time.sleep(10)
         
-        try:
-            # Wait for any element to be present
-            element = WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            
-            # Get page source for debugging
-            page_source = driver.page_source
-            st.write(f"Page source length: {len(page_source)}")
-            
-            # Try to find any content
-            content = driver.find_elements(By.TAG_NAME, "div")
-            st.write(f"Found {len(content)} div elements")
-            
-            # Save HTML for debugging
-            with open("debug.html", "w", encoding="utf-8") as f:
-                f.write(page_source)
-            st.write("Saved page source to debug.html")
-            
-        except Exception as e:
-            st.error(f"Error waiting for elements: {str(e)}")
+        items = []
+        
+        # Scroll a few times to load more content
+        for i in range(3):
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+            st.write(f"Scroll {i+1} completed")
+        
+        # Look for marketplace items using multiple selectors
+        selectors = [
+            "div[style*='border-radius: max']",  # Common marketplace item container
+            "a[href*='/marketplace/item/']",     # Item links
+            "div[style*='width: 100%'][role='button']"  # Item containers
+        ]
+        
+        for selector in selectors:
+            st.write(f"Trying selector: {selector}")
+            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+            if elements:
+                st.write(f"Found {len(elements)} items with selector {selector}")
+                
+                for element in elements:
+                    try:
+                        # Get the entire HTML of the element for debugging
+                        html = element.get_attribute('outerHTML')
+                        st.write(f"Processing element: {html[:200]}...")  # First 200 chars
+                        
+                        # Try to extract title
+                        try:
+                            title = element.find_element(By.CSS_SELECTOR, "span[style*='line-clamp']").text
+                        except:
+                            title = element.find_element(By.CSS_SELECTOR, "span").text
+                        
+                        # Try to extract price
+                        try:
+                            price_elem = element.find_element(By.CSS_SELECTOR, "span[style*='color: rgb(5, 5, 5)']")
+                            price = price_elem.text
+                        except:
+                            price = "0"
+                        
+                        # Clean price
+                        price_clean = ''.join(filter(str.isdigit, price))
+                        price_clean = int(price_clean) if price_clean else 0
+                        
+                        # Get link
+                        try:
+                            link = element.get_attribute("href")
+                            if not link:
+                                link = element.find_element(By.CSS_SELECTOR, "a").get_attribute("href")
+                        except:
+                            link = "#"
+                        
+                        if title and price_clean > 0:
+                            items.append({
+                                'title': title,
+                                'price': price_clean,
+                                'link': link,
+                                'city': city,
+                                'search_term': product
+                            })
+                            st.write(f"Added item: {title} - ${price_clean}")
+                    
+                    except Exception as e:
+                        st.write(f"Error processing element: {str(e)}")
+                        continue
+                
+                if items:
+                    break  # If we found items with this selector, stop trying others
         
         driver.quit()
         st.write("Browser closed")
         
-        # Return empty results for now
-        return pd.DataFrame(), 0
+        if items:
+            df = pd.DataFrame(items)
+            st.write("Scraped data preview:")
+            st.write(df)
+            return df, len(items)
+        else:
+            st.warning("No items found")
+            return pd.DataFrame(), 0
             
     except Exception as e:
         st.error(f"Error during scraping: {str(e)}")
