@@ -1,0 +1,5 @@
+your-project/
+├── app.py           (your existing file)
+├── Dockerfile       (already created)
+├── requirements.txt (already created)
+└── .dockerignore    (new file needed) 
