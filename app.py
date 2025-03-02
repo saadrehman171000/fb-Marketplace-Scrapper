@@ -14,6 +14,9 @@ from selenium.webdriver.chrome.options import Options
 import zipfile
 import io
 import os
+import random
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 # Function to run the web scraping for exact matches
 def scrape_facebook_marketplace_exact(city, product, min_price, max_price, city_code_fb):
@@ -26,47 +29,70 @@ def scrape_facebook_marketplace_partial(city, product, min_price, max_price, cit
 # Main scraping function with an exact match flag
 def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact, sleep_time=3):
     chrome_options = uc.ChromeOptions()
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_argument("--start-maximized")
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--disable-extensions")
     
-    # For cloud deployment
-    chrome_options.binary_location = "/usr/bin/chromium"
+    # Enhanced anti-detection options
+    chrome_options.add_argument('--no-sandbox')
+    chrome_options.add_argument('--disable-dev-shm-usage')
+    chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+    chrome_options.add_argument("--disable-notifications")
+    chrome_options.add_argument("--ignore-certificate-errors")
+    chrome_options.add_argument("--disable-popup-blocking")
+    chrome_options.add_argument('--no-first-run')
+    chrome_options.add_argument('--no-service-autorun')
+    chrome_options.add_argument('--password-store=basic')
+    chrome_options.add_argument(f"--window-size=1920,1080")
+    chrome_options.add_argument("--start-maximized")
+    
+    # Add a realistic user agent
+    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
     
     try:
-        # Create a local directory for chromedriver
         os.makedirs('.chrome', exist_ok=True)
         
-        # Try with version override
-        version_main = 120  # Match the Chrome version installed
         browser = uc.Chrome(
             options=chrome_options,
-            version_main=version_main,
-            driver_executable_path=None  # Let undetected_chromedriver handle it
+            driver_executable_path=None,
+            headless=True,  # Changed from argument to parameter
+            use_subprocess=True  # Add this for better stability
         )
         st.info("Browser initialized successfully")
         
-        exact_param = 'true' if exact else 'false'
+        # First load Facebook's main page
+        browser.get('https://www.facebook.com')
+        time.sleep(5)
         
-        # Try different URL format
-        url = f"https://www.facebook.com/marketplace/category/search/?query={product}&exact={exact_param}&minPrice={min_price}&maxPrice={max_price}&region_id={city_code_fb}"
-        st.info(f"Attempting to access URL: {url}")
-        browser.get(url)
-        
-        # Wait longer for initial load
-        time.sleep(15)
+        # Try different URL formats if the first one doesn't work
+        urls = [
+            f"https://www.facebook.com/marketplace/{city_code_fb}/search?query={product}&exact={exact}&minPrice={min_price}&maxPrice={max_price}",
+            f"https://www.facebook.com/marketplace/category/search/?query={product}&exact={exact}&minPrice={min_price}&maxPrice={max_price}&region_id={city_code_fb}",
+            f"https://www.facebook.com/marketplace/search?query={product}&exact={exact}&minPrice={min_price}&maxPrice={max_price}&latitude=34.0522&longitude=-118.2437"
+        ]
+
+        for url in urls:
+            try:
+                st.info(f"Attempting to access URL: {url}")
+                browser.get(url)
+                time.sleep(random.uniform(10, 15))
+                
+                # Check if we got results
+                items = []
+                for selector in selectors:
+                    items = browser.find_elements(By.CSS_SELECTOR, selector)
+                    if len(items) > 0:
+                        break
+                
+                if len(items) > 0:
+                    break  # Found items, use this URL
+            except:
+                continue
         
         st.info("Page loaded, checking for elements...")
         
-        # Update the selectors to better target marketplace items
+        # Updated selectors for better targeting
         selectors = [
-            "div[class*='x3ct3a4'] a[role='link']",  # Main container with link
-            "div[class*='x1xmf6yo']",  # Product card container
-            "div[role='main'] div[style*='border-radius: 8px']"  # Product cards by style
+            "div[role='main'] a[role='link']",
+            "div[style*='border-radius: max(0px, min(8px, calc((100vw - 4px - 100%) * 9999))) / 8px']",
+            "div[class*='x3ct3a4']"
         ]
         
         items = []
