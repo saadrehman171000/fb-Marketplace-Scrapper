@@ -2,6 +2,7 @@
 streamlit
 requests
 pandas
+urllib3
 
 # For Option 2 (requests-html)
 streamlit

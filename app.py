@@ -6,115 +6,81 @@ import json
 import time
 import io
 import zipfile
+from urllib.parse import quote
 
-def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact):
+def facebook_login(email, password):
+    session = requests.Session()
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'max-age=0',
-        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1',
-        'Cookie': 'locale=en_US; c_user=guest; presence=guest'
+        'Accept-Language': 'en-US,en;q=0.9'
     }
-
+    
     try:
-        session = requests.Session()
-        
-        # First, get CSRF token
+        # Get initial page to get login form parameters
         init_response = session.get('https://www.facebook.com', headers=headers)
+        
         if init_response.status_code == 200:
-            st.info("Got initial Facebook page...")
-            
-            # Try to extract CSRF token
+            # Extract login form parameters
             content = init_response.text
-            csrf_start = content.find('"async_get_token":"') + 18
-            if csrf_start > 18:
-                csrf_end = content.find('"', csrf_start)
-                csrf_token = content[csrf_start:csrf_end]
-                headers['X-Fb-Friendly-Name'] = 'CometMarketplaceSearchContentPaginationQuery'
-                headers['X-Fb-Lsd'] = csrf_token
+            lsd_start = content.find('"lsd","value":"') + 14
+            lsd_end = content.find('"', lsd_start)
+            lsd = content[lsd_start:lsd_end] if lsd_start > 14 else ""
             
-            # Now try the marketplace API
-            api_url = "https://www.facebook.com/api/graphql/"
-            variables = {
-                "count": 24,
-                "params": {
-                    "bqf": {
-                        "callsite": "COMMERCE_MKTPLACE_WWW",
-                        "query": product,
-                        "regionid": city_code_fb,
-                        "filters": [
-                            {"price_lower_bound": min_price},
-                            {"price_upper_bound": max_price}
-                        ]
-                    }
-                }
+            jazoest_start = content.find('"jazoest","value":"') + 19
+            jazoest_end = content.find('"', jazoest_start)
+            jazoest = content[jazoest_start:jazoest_end] if jazoest_start > 19 else ""
+            
+            # Login data
+            login_data = {
+                'lsd': lsd,
+                'jazoest': jazoest,
+                'email': email,
+                'pass': password,
+                'login': '1',
+                'persistent': '1'
             }
             
-            data = {
-                "doc_id": "7711610262190251",
-                "variables": json.dumps(variables),
-                "fb_dtsg": csrf_token
-            }
+            # Perform login
+            login_response = session.post(
+                'https://www.facebook.com/login/device-based/regular/login/',
+                data=login_data,
+                headers=headers,
+                allow_redirects=True
+            )
             
-            st.info("Sending marketplace search request...")
-            response = session.post(api_url, headers=headers, data=data)
-            
-            if response.status_code == 200:
-                try:
-                    json_data = response.json()
-                    items = []
-                    
-                    # Try different paths to find listings
-                    paths = [
-                        ['data', 'marketplace_search', 'feed_units'],
-                        ['data', 'marketplace_search', 'edges'],
-                        ['data', 'marketplace_search', 'results']
-                    ]
-                    
-                    for path in paths:
-                        current = json_data
-                        for key in path:
-                            if isinstance(current, dict) and key in current:
-                                current = current[key]
-                            else:
-                                current = None
-                                break
-                        
-                        if current and isinstance(current, list):
-                            for item in current:
-                                try:
-                                    listing = item.get('node', item)
-                                    items.append({
-                                        'title': listing.get('title', ''),
-                                        'price': listing.get('price', {}).get('amount', 0),
-                                        'price_text': f"${listing.get('price', {}).get('amount', 0)}",
-                                        'location': city,
-                                        'url': f"https://www.facebook.com/marketplace/item/{listing.get('id', '')}"
-                                    })
-                                except:
-                                    continue
-                            
-                            if items:
-                                break
-                    
-                    st.info(f"Found {len(items)} items")
-                    return pd.DataFrame(items), len(items)
-                    
-                except Exception as e:
-                    st.error(f"Error parsing response: {str(e)}")
+            # Check if login was successful
+            if 'c_user' in session.cookies:
+                st.success("Successfully logged in to Facebook!")
+                return session
             else:
-                st.error(f"API request failed: {response.status_code}")
+                st.error("Failed to log in. Please check your credentials.")
+                return None
                 
-        return pd.DataFrame(), 0
+        else:
+            st.error("Could not access Facebook login page.")
+            return None
+            
+    except Exception as e:
+        st.error(f"Login error: {str(e)}")
+        return None
 
+def scrape_facebook_marketplace(session, city, product, min_price, max_price, city_code_fb, exact):
+    if not session:
+        st.error("No active Facebook session. Please log in first.")
+        return pd.DataFrame(), 0
+        
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'X-FB-Friendly-Name': 'CometMarketplaceSearchContentPaginationQuery'
+    }
+    
+    try:
+        # Add your scraping logic here
+        return pd.DataFrame(), 0  # Temporary return until scraping logic is added
+        
     except Exception as e:
         st.error(f"Error during scraping: {str(e)}")
         return pd.DataFrame(), 0
@@ -131,6 +97,19 @@ if "marketplaces" not in st.session_state:
 
 if "scraped_data" not in st.session_state:
     st.session_state["scraped_data"] = None
+
+# Add login section
+with st.sidebar:
+    st.header("Facebook Login")
+    with st.form("login_form"):
+        email = st.text_input("Email", type="default")
+        password = st.text_input("Password", type="password")
+        login_button = st.form_submit_button("Login")
+        
+        if login_button and email and password:
+            session = facebook_login(email, password)
+            if session:
+                st.session_state['fb_session'] = session
 
 # Input fields with better layout and styling
 with st.form(key='input_form'):
@@ -181,23 +160,25 @@ if st.session_state["marketplaces"]:
 
 # Handle scraping data
 if submit_button:
-    st.session_state["scraped_data"] = None
-    individual_files = []
-
-    if not st.session_state["marketplaces"]:
-        st.error("Please add at least one marketplace to scrape data.")
+    if 'fb_session' not in st.session_state:
+        st.error("Please log in to Facebook first")
     else:
-        combined_df = pd.DataFrame()
-        for marketplace in st.session_state["marketplaces"]:
-            with st.spinner(f"Scraping data for {marketplace['city']}..."):
-                items_df, total_links = scrape_facebook_marketplace(
-                    marketplace["city"],
-                    marketplace["product"],
-                    marketplace["min_price"],
-                    marketplace["max_price"],
-                    marketplace["city_code_fb"],
-                    exact=True
-                )
+        # Use the authenticated session for scraping
+        individual_files = []
+        if not st.session_state["marketplaces"]:
+            st.error("Please add at least one marketplace to scrape data.")
+        else:
+            for marketplace in st.session_state["marketplaces"]:
+                with st.spinner(f"Scraping data for {marketplace['city']}..."):
+                    items_df, total_links = scrape_facebook_marketplace(
+                        st.session_state['fb_session'],
+                        marketplace["city"],
+                        marketplace["product"],
+                        marketplace["min_price"],
+                        marketplace["max_price"],
+                        marketplace["city_code_fb"],
+                        exact=True
+                    )
 
             if not items_df.empty:
                 if "scraped_data" not in st.session_state:
