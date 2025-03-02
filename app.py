@@ -34,7 +34,7 @@ def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_f
     chrome_options.add_argument("--headless")
     
     # For cloud deployment
-    chrome_options.binary_location = "/usr/bin/chromium-browser"
+    chrome_options.binary_location = "/usr/bin/chromium"
     
     try:
         browser = uc.Chrome(options=chrome_options)
