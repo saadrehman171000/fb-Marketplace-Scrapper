@@ -9,106 +9,93 @@ import zipfile
 from urllib.parse import quote
 from dotenv import load_dotenv
 import os
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
 
 load_dotenv()  # Load environment variables from .env file
 
 def init_session_state():
-    if 'fb_session' not in st.session_state:
-        st.session_state.fb_session = None
+    if 'driver' not in st.session_state:
+        st.session_state.driver = None
         st.session_state.logged_in = False
+
+def setup_driver():
+    chrome_options = Options()
+    chrome_options.add_argument('--headless')
+    chrome_options.add_argument('--no-sandbox')
+    chrome_options.add_argument('--disable-dev-shm-usage')
+    chrome_options.add_argument('--disable-gpu')
+    chrome_options.add_argument('--window-size=1920,1080')
+    return webdriver.Chrome(options=chrome_options)
+
+def facebook_login(email, password):
+    try:
+        if not st.session_state.driver:
+            st.session_state.driver = setup_driver()
+        
+        driver = st.session_state.driver
+        driver.get('https://www.facebook.com')
+        
+        # Wait for email field and enter email
+        email_field = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "email"))
+        )
+        email_field.send_keys(email)
+        
+        # Enter password
+        password_field = driver.find_element(By.ID, "pass")
+        password_field.send_keys(password)
+        
+        # Click login button
+        login_button = driver.find_element(By.NAME, "login")
+        login_button.click()
+        
+        # Wait for successful login
+        time.sleep(5)  # Wait for login to complete
+        
+        if "home" in driver.current_url.lower():
+            st.session_state.logged_in = True
+            st.success("Successfully logged in to Facebook!")
+            return True
+            
+        return False
+        
+    except Exception as e:
+        st.error(f"Login error: {str(e)}")
+        return False
+
+def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact):
+    if not st.session_state.logged_in:
+        if not auto_login():
+            st.error("No active Facebook session. Please log in first.")
+            return pd.DataFrame(), 0
+    
+    try:
+        driver = st.session_state.driver
+        marketplace_url = f"https://www.facebook.com/marketplace/{city_code_fb}/search?query={product}&minPrice={min_price}&maxPrice={max_price}"
+        driver.get(marketplace_url)
+        
+        # Add your scraping logic here using Selenium
+        # This is a placeholder - you'll need to implement the actual scraping
+        time.sleep(5)  # Wait for page to load
+        
+        # Return empty DataFrame for now
+        return pd.DataFrame(), 0
+        
+    except Exception as e:
+        st.error(f"Error during scraping: {str(e)}")
+        return pd.DataFrame(), 0
 
 def auto_login():
     email = os.getenv('FACEBOOK_EMAIL')
     password = os.getenv('FACEBOOK_PASSWORD')
     
     if email and password and not st.session_state.logged_in:
-        session = facebook_login(email, password)
-        if session:
-            st.session_state.fb_session = session
-            st.session_state.logged_in = True
-            return True
+        return facebook_login(email, password)
     return False
-
-def facebook_login(email, password):
-    session = requests.Session()
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1',
-        'Referer': 'https://m.facebook.com/',
-        'Origin': 'https://m.facebook.com'
-    }
-    
-    try:
-        # Initial page load to get cookies
-        init_response = session.get('https://m.facebook.com/', headers=headers, timeout=30)
-        
-        if init_response.status_code == 200:
-            # Login data with additional parameters
-            login_data = {
-                'email': email,
-                'pass': password,
-                'login': '1',
-                'next': '',
-                'login_source': 'comet_headerless',
-                'refsrc': 'deprecated',
-                'app_id': '256281040558',
-                'locale': 'en_US'
-            }
-            
-            # Perform login
-            login_response = session.post(
-                'https://m.facebook.com/login/device-based/regular/login/',
-                data=login_data,
-                headers=headers,
-                allow_redirects=True
-            )
-            
-            # Check if login was successful
-            if 'c_user' in session.cookies or 'xs' in session.cookies:
-                st.success("Successfully logged in to Facebook!")
-                return session
-            else:
-                st.error("Failed to log in. Please check your credentials.")
-                return None
-                
-        else:
-            st.error("Could not access Facebook login page.")
-            return None
-            
-    except Exception as e:
-        st.error(f"Login error: {str(e)}")
-        return None
-
-def scrape_facebook_marketplace(city, product, min_price, max_price, city_code_fb, exact):
-    if not st.session_state.fb_session:
-        # Try auto-login one more time
-        if not auto_login():
-            st.error("No active Facebook session. Please log in first.")
-            return pd.DataFrame(), 0
-    
-    # Use the session from session state
-    session = st.session_state.fb_session
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'X-FB-Friendly-Name': 'CometMarketplaceSearchContentPaginationQuery'
-    }
-    
-    try:
-        # Add your scraping logic here
-        return pd.DataFrame(), 0  # Temporary return until scraping logic is added
-        
-    except Exception as e:
-        st.error(f"Error during scraping: {str(e)}")
-        return pd.DataFrame(), 0
 
 # Streamlit UI
 st.set_page_config(page_title="Facebook Marketplace Scraper", layout="wide")
